@@ -1,6 +1,7 @@
 import {
   Activity,
   Atom,
+  ChevronDown,
   Gauge,
   Orbit,
   Pause,
@@ -58,10 +59,32 @@ type SampleRow = {
   typeLabel: string;
 };
 
+type PlanetVisualId = 'custom' | 'mercury' | 'venus' | 'earth' | 'mars' | 'jupiter' | 'saturn' | 'uranus' | 'neptune';
+
+type PlanetPreset = {
+  id: Exclude<PlanetVisualId, 'custom'>;
+  name: string;
+  massE24: number;
+  radiusKm: number;
+};
+
+type PlanetVisual = {
+  glow: string;
+  haze: string;
+  stops: Array<[number, string]>;
+  bandColor: string;
+  bandAlpha: number;
+  bandCount: number;
+  bandTilt: number;
+  shadow: string;
+  spots?: Array<{ x: number; y: number; rx: number; ry: number; color: string; alpha: number }>;
+  ring?: { color: string; shadow: string };
+};
+
 const earthMassE24 = EARTH_MASS_KG / 1e24;
 const earthRadiusKm = EARTH_RADIUS_M / 1000;
 
-const planetPresets = [
+const planetPresets: PlanetPreset[] = [
   { id: 'mercury', name: 'Меркурий', massE24: 0.33011, radiusKm: 2439.7 },
   { id: 'venus', name: 'Венера', massE24: 4.8675, radiusKm: 6051.8 },
   { id: 'earth', name: 'Земля', massE24: earthMassE24, radiusKm: earthRadiusKm },
@@ -71,6 +94,164 @@ const planetPresets = [
   { id: 'uranus', name: 'Уран', massE24: 86.811, radiusKm: 25362 },
   { id: 'neptune', name: 'Нептун', massE24: 102.409, radiusKm: 24622 },
 ];
+
+const planetVisuals: Record<PlanetVisualId, PlanetVisual> = {
+  custom: {
+    glow: 'rgba(69, 210, 191, 0.58)',
+    haze: 'rgba(63, 218, 195, 0.24)',
+    stops: [
+      [0, '#d8fff5'],
+      [0.18, '#7df1d7'],
+      [0.48, '#217c85'],
+      [0.76, '#123c63'],
+      [1, '#07131f'],
+    ],
+    bandColor: '#f1c36a',
+    bandAlpha: 0.32,
+    bandCount: 7,
+    bandTilt: 0.18,
+    shadow: '#07131f',
+  },
+  mercury: {
+    glow: 'rgba(191, 185, 171, 0.34)',
+    haze: 'rgba(176, 169, 154, 0.18)',
+    stops: [
+      [0, '#fff0cf'],
+      [0.24, '#b9aa93'],
+      [0.58, '#6e675e'],
+      [1, '#252525'],
+    ],
+    bandColor: '#2f2c28',
+    bandAlpha: 0.16,
+    bandCount: 0,
+    bandTilt: 0,
+    shadow: '#151412',
+    spots: [
+      { x: -0.24, y: -0.16, rx: 0.1, ry: 0.07, color: '#3b3935', alpha: 0.32 },
+      { x: 0.2, y: 0.18, rx: 0.08, ry: 0.06, color: '#e3d0b4', alpha: 0.22 },
+      { x: -0.02, y: 0.32, rx: 0.06, ry: 0.05, color: '#2a2927', alpha: 0.28 },
+    ],
+  },
+  venus: {
+    glow: 'rgba(255, 212, 118, 0.45)',
+    haze: 'rgba(255, 198, 86, 0.21)',
+    stops: [
+      [0, '#fff7cc'],
+      [0.25, '#f5c66d'],
+      [0.58, '#c77b35'],
+      [1, '#4f2f1d'],
+    ],
+    bandColor: '#fff0af',
+    bandAlpha: 0.28,
+    bandCount: 8,
+    bandTilt: -0.08,
+    shadow: '#2b1a12',
+  },
+  earth: {
+    glow: 'rgba(74, 177, 255, 0.5)',
+    haze: 'rgba(74, 210, 255, 0.22)',
+    stops: [
+      [0, '#eaffff'],
+      [0.18, '#68d7c8'],
+      [0.42, '#217ab8'],
+      [0.72, '#173d7d'],
+      [1, '#071421'],
+    ],
+    bandColor: '#e9f8ca',
+    bandAlpha: 0.28,
+    bandCount: 6,
+    bandTilt: 0.12,
+    shadow: '#071421',
+    spots: [
+      { x: -0.22, y: -0.05, rx: 0.18, ry: 0.08, color: '#55b779', alpha: 0.34 },
+      { x: 0.12, y: 0.18, rx: 0.14, ry: 0.06, color: '#8ed16f', alpha: 0.26 },
+      { x: -0.08, y: 0.28, rx: 0.12, ry: 0.04, color: '#ffffff', alpha: 0.24 },
+    ],
+  },
+  mars: {
+    glow: 'rgba(255, 103, 73, 0.44)',
+    haze: 'rgba(255, 122, 76, 0.2)',
+    stops: [
+      [0, '#ffe1b8'],
+      [0.24, '#e86f43'],
+      [0.56, '#a53f2f'],
+      [1, '#371815'],
+    ],
+    bandColor: '#ffc07a',
+    bandAlpha: 0.18,
+    bandCount: 5,
+    bandTilt: -0.14,
+    shadow: '#230f0d',
+    spots: [
+      { x: -0.28, y: -0.08, rx: 0.14, ry: 0.08, color: '#6f2b24', alpha: 0.36 },
+      { x: 0.18, y: 0.22, rx: 0.1, ry: 0.05, color: '#ffd8ae', alpha: 0.28 },
+    ],
+  },
+  jupiter: {
+    glow: 'rgba(255, 198, 122, 0.48)',
+    haze: 'rgba(255, 184, 111, 0.22)',
+    stops: [
+      [0, '#fff3ce'],
+      [0.22, '#eac37e'],
+      [0.52, '#b27245'],
+      [0.78, '#6c473b'],
+      [1, '#241a17'],
+    ],
+    bandColor: '#ffe0a4',
+    bandAlpha: 0.48,
+    bandCount: 11,
+    bandTilt: 0.03,
+    shadow: '#241a17',
+    spots: [{ x: 0.18, y: 0.18, rx: 0.2, ry: 0.095, color: '#c84f3f', alpha: 0.72 }],
+  },
+  saturn: {
+    glow: 'rgba(246, 213, 146, 0.44)',
+    haze: 'rgba(246, 213, 146, 0.2)',
+    stops: [
+      [0, '#fff6d5'],
+      [0.24, '#e7c276'],
+      [0.56, '#a88955'],
+      [1, '#3b2c20'],
+    ],
+    bandColor: '#fff0bd',
+    bandAlpha: 0.34,
+    bandCount: 8,
+    bandTilt: 0.02,
+    shadow: '#21180f',
+    ring: { color: 'rgba(244, 217, 159, 0.72)', shadow: 'rgba(255, 226, 165, 0.42)' },
+  },
+  uranus: {
+    glow: 'rgba(127, 242, 235, 0.46)',
+    haze: 'rgba(127, 242, 235, 0.2)',
+    stops: [
+      [0, '#ecfffb'],
+      [0.26, '#80f0e8'],
+      [0.62, '#4fb3c4'],
+      [1, '#17374f'],
+    ],
+    bandColor: '#d8fffb',
+    bandAlpha: 0.16,
+    bandCount: 4,
+    bandTilt: 0.22,
+    shadow: '#10263a',
+  },
+  neptune: {
+    glow: 'rgba(73, 116, 255, 0.5)',
+    haze: 'rgba(73, 116, 255, 0.22)',
+    stops: [
+      [0, '#dbe8ff'],
+      [0.24, '#5b91ff'],
+      [0.58, '#2549c8'],
+      [1, '#081340'],
+    ],
+    bandColor: '#9dd5ff',
+    bandAlpha: 0.24,
+    bandCount: 5,
+    bandTilt: -0.1,
+    shadow: '#071035',
+    spots: [{ x: 0.18, y: -0.12, rx: 0.13, ry: 0.07, color: '#0b1d6f', alpha: 0.42 }],
+  },
+};
 
 function formatSpeed(value: number) {
   return `${(value / 1000).toFixed(2)} км/с`;
@@ -113,6 +294,8 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [launchToken, setLaunchToken] = useState(0);
   const [samples, setSamples] = useState<SampleRow[]>([]);
+  const [isPlanetMenuOpen, setIsPlanetMenuOpen] = useState(false);
+  const [planetMenuDirection, setPlanetMenuDirection] = useState<'up' | 'down'>('down');
   const [options, setOptions] = useState<DisplayOptions>({
     showTrail: true,
     showVelocity: true,
@@ -122,12 +305,13 @@ function App() {
 
   const massKg = planetMassE24 * 1e24;
   const radiusM = planetRadiusKm * 1000;
-  const selectedPlanetPreset = useMemo(() => {
+  const selectedPlanetPreset = useMemo<PlanetVisualId>(() => {
     const match = planetPresets.find(
       (planet) => Math.abs(planet.massE24 - planetMassE24) < 0.0005 && Math.abs(planet.radiusKm - planetRadiusKm) < 0.05,
     );
     return match?.id ?? 'custom';
   }, [planetMassE24, planetRadiusKm]);
+  const selectedPlanetName = planetPresets.find((planet) => planet.id === selectedPlanetPreset)?.name ?? 'Своя планета';
   const speeds = useMemo(() => cosmicSpeeds(massKg, radiusM), [massKg, radiusM]);
   const speedMps = speedRatio * speeds.first;
   const config = useMemo<OrbitConfig>(
@@ -214,14 +398,16 @@ function App() {
     setLaunchToken((value) => value + 1);
   };
 
-  const selectPlanetPreset = (presetId: string) => {
+  const selectPlanetPreset = (presetId: PlanetVisualId) => {
     const preset = planetPresets.find((planet) => planet.id === presetId);
     if (!preset) {
+      setIsPlanetMenuOpen(false);
       return;
     }
 
     setPlanetMassE24(preset.massE24);
     setPlanetRadiusKm(preset.radiusKm);
+    setIsPlanetMenuOpen(false);
   };
 
   const toggleOption = (key: keyof DisplayOptions) => {
@@ -300,6 +486,7 @@ function App() {
         <section className="visual-stage" aria-label="Визуализация траектории">
           <GravityCanvas
             config={config}
+            planetVisualId={selectedPlanetPreset}
             launchToken={launchToken}
             running={isRunning}
             timeScale={timeScale}
@@ -418,22 +605,65 @@ function App() {
             />
           </section>
 
-          <section className="control-panel">
+          <section className="control-panel planet-panel">
             <div className="panel-title">
               <Settings2 size={19} />
               Планета и время
             </div>
-            <label className="select-field">
+            <div
+              className="planet-picker"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) {
+                  setIsPlanetMenuOpen(false);
+                }
+              }}
+            >
               <span>Готовая планета</span>
-              <select value={selectedPlanetPreset} onChange={(event) => selectPlanetPreset(event.target.value)}>
-                <option value="custom">Своя планета</option>
+              <button
+                className="planet-select-button"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={isPlanetMenuOpen}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const spaceBelow = window.innerHeight - rect.bottom;
+                  const spaceAbove = rect.top;
+                  setPlanetMenuDirection(spaceBelow < 330 && spaceAbove > spaceBelow ? 'up' : 'down');
+                  setIsPlanetMenuOpen((value) => !value);
+                }}
+              >
+                <span className={`planet-swatch ${selectedPlanetPreset}`} aria-hidden="true" />
+                <strong>{selectedPlanetName}</strong>
+                <ChevronDown size={17} />
+              </button>
+              {isPlanetMenuOpen && (
+                <div className={`planet-menu ${planetMenuDirection}`} role="listbox" aria-label="Готовые планеты">
+                  <button
+                    className={`planet-option ${selectedPlanetPreset === 'custom' ? 'active' : ''}`}
+                    type="button"
+                    role="option"
+                    aria-selected={selectedPlanetPreset === 'custom'}
+                    onClick={() => selectPlanetPreset('custom')}
+                  >
+                    <span className="planet-swatch custom" aria-hidden="true" />
+                    Своя планета
+                  </button>
                 {planetPresets.map((planet) => (
-                  <option key={planet.id} value={planet.id}>
+                  <button
+                    className={`planet-option ${selectedPlanetPreset === planet.id ? 'active' : ''}`}
+                    key={planet.id}
+                    type="button"
+                    role="option"
+                    aria-selected={selectedPlanetPreset === planet.id}
+                    onClick={() => selectPlanetPreset(planet.id)}
+                  >
+                    <span className={`planet-swatch ${planet.id}`} aria-hidden="true" />
                     {planet.name}
-                  </option>
+                  </button>
                 ))}
-              </select>
-            </label>
+                </div>
+              )}
+            </div>
             <div className="input-grid">
               <label>
                 <span>Масса, 10²⁴ кг</span>
@@ -560,6 +790,7 @@ function App() {
 
 type GravityCanvasProps = {
   config: OrbitConfig;
+  planetVisualId: PlanetVisualId;
   launchToken: number;
   running: boolean;
   timeScale: number;
@@ -591,12 +822,12 @@ type SimStore = {
   lastTelemetry: number;
 };
 
-function GravityCanvas({ config, launchToken, running, timeScale, options, onTelemetry, onStop }: GravityCanvasProps) {
+function GravityCanvas({ config, planetVisualId, launchToken, running, timeScale, options, onTelemetry, onStop }: GravityCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const simRef = useRef<SimStore | null>(null);
   const starsRef = useRef<Star[]>([]);
-  const latestRef = useRef({ config, running, timeScale, options, onTelemetry, onStop });
-  latestRef.current = { config, running, timeScale, options, onTelemetry, onStop };
+  const latestRef = useRef({ config, planetVisualId, running, timeScale, options, onTelemetry, onStop });
+  latestRef.current = { config, planetVisualId, running, timeScale, options, onTelemetry, onStop };
 
   const resetSimulation = useCallback(() => {
     const previous = simRef.current;
@@ -699,7 +930,7 @@ function GravityCanvas({ config, launchToken, running, timeScale, options, onTel
       }
 
       if (sim) {
-        drawScene(context, rect.width, rect.height, now, sim, props.config, props.options);
+        drawScene(context, rect.width, rect.height, now, sim, props.config, props.options, props.planetVisualId);
         if (now - sim.lastTelemetry > 100) {
           const state = bodyToState(sim.engine.satellite);
           props.onTelemetry({
@@ -749,6 +980,7 @@ function drawScene(
   sim: SimStore,
   config: OrbitConfig,
   options: DisplayOptions,
+  planetVisualId: PlanetVisualId,
 ) {
   context.clearRect(0, 0, width, height);
   drawBackground(context, width, height, now);
@@ -781,7 +1013,7 @@ function drawScene(
     drawTrail(context, sim.trail, toScreen);
   }
 
-  drawPlanet(context, center, config.radiusM * scale, now);
+  drawPlanet(context, center, config.radiusM * scale, now, planetVisualId);
   drawStartMarker(context, toScreen({ x: config.radiusM, y: 0 }), now);
   drawSatellite(context, toScreen(state), state, config, scale, now, sim.collided);
 
@@ -912,13 +1144,25 @@ function drawTrail(
   context.restore();
 }
 
-function drawPlanet(context: CanvasRenderingContext2D, center: { x: number; y: number }, radius: number, now: number) {
+function drawPlanet(
+  context: CanvasRenderingContext2D,
+  center: { x: number; y: number },
+  radius: number,
+  now: number,
+  visualId: PlanetVisualId,
+) {
+  const visual = planetVisuals[visualId] ?? planetVisuals.custom;
+
+  if (visual.ring) {
+    drawPlanetRing(context, center, radius, visual.ring, now, 'back');
+  }
+
   context.save();
-  context.shadowColor = 'rgba(69, 210, 191, 0.58)';
+  context.shadowColor = visual.glow;
   context.shadowBlur = Math.max(18, radius * 0.25);
   context.beginPath();
   context.arc(center.x, center.y, radius, 0, Math.PI * 2);
-  context.fillStyle = 'rgba(63, 218, 195, 0.24)';
+  context.fillStyle = visual.haze;
   context.fill();
   context.shadowBlur = 0;
 
@@ -930,40 +1174,95 @@ function drawPlanet(context: CanvasRenderingContext2D, center: { x: number; y: n
     center.y,
     radius,
   );
-  planet.addColorStop(0, '#d8fff5');
-  planet.addColorStop(0.18, '#7df1d7');
-  planet.addColorStop(0.48, '#217c85');
-  planet.addColorStop(0.76, '#123c63');
-  planet.addColorStop(1, '#07131f');
+  visual.stops.forEach(([position, color]) => planet.addColorStop(position, color));
   context.beginPath();
   context.arc(center.x, center.y, radius, 0, Math.PI * 2);
   context.fillStyle = planet;
   context.fill();
 
   context.clip();
-  context.globalAlpha = 0.32;
-  context.strokeStyle = '#f1c36a';
-  context.lineWidth = Math.max(1, radius * 0.012);
   const phase = now * 0.00012;
-  for (let i = -3; i <= 3; i += 1) {
-    context.beginPath();
-    context.ellipse(
-      center.x + Math.sin(phase + i) * radius * 0.12,
-      center.y + (i * radius) / 5,
-      radius * (0.78 - Math.abs(i) * 0.055),
-      radius * 0.12,
-      Math.sin(phase) * 0.18,
-      0,
-      Math.PI * 2,
-    );
-    context.stroke();
+
+  if (visual.bandCount > 0) {
+    context.globalAlpha = visual.bandAlpha;
+    context.strokeStyle = visual.bandColor;
+    context.lineWidth = Math.max(1, radius * (visualId === 'jupiter' ? 0.018 : 0.012));
+    const half = (visual.bandCount - 1) / 2;
+    for (let index = 0; index < visual.bandCount; index += 1) {
+      const offset = index - half;
+      const normalized = half === 0 ? 0 : offset / half;
+      context.beginPath();
+      context.ellipse(
+        center.x + Math.sin(phase + index) * radius * 0.1,
+        center.y + normalized * radius * 0.68,
+        radius * (0.78 - Math.abs(normalized) * 0.08),
+        radius * (visualId === 'jupiter' ? 0.085 : 0.105),
+        visual.bandTilt + Math.sin(phase) * 0.06,
+        0,
+        Math.PI * 2,
+      );
+      context.stroke();
+    }
+  }
+
+  if (visual.spots) {
+    visual.spots.forEach((spot) => {
+      context.globalAlpha = spot.alpha;
+      context.fillStyle = spot.color;
+      context.beginPath();
+      context.ellipse(
+        center.x + spot.x * radius,
+        center.y + spot.y * radius,
+        spot.rx * radius,
+        spot.ry * radius,
+        visual.bandTilt * 0.7,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+    });
   }
 
   context.globalAlpha = 0.18;
-  context.fillStyle = '#07131f';
+  context.fillStyle = visual.shadow;
   context.beginPath();
   context.ellipse(center.x + radius * 0.48, center.y + radius * 0.1, radius * 0.78, radius * 1.08, -0.22, 0, Math.PI * 2);
   context.fill();
+  context.restore();
+
+  if (visual.ring) {
+    drawPlanetRing(context, center, radius, visual.ring, now, 'front');
+  }
+}
+
+function drawPlanetRing(
+  context: CanvasRenderingContext2D,
+  center: { x: number; y: number },
+  radius: number,
+  ring: { color: string; shadow: string },
+  now: number,
+  layer: 'back' | 'front',
+) {
+  context.save();
+  context.translate(center.x, center.y);
+  context.rotate(-0.18 + Math.sin(now * 0.0001) * 0.015);
+  context.shadowColor = ring.shadow;
+  context.shadowBlur = radius * 0.12;
+  context.strokeStyle = ring.color;
+  context.lineWidth = Math.max(4, radius * 0.11);
+  context.beginPath();
+  if (layer === 'front') {
+    context.ellipse(0, 0, radius * 1.65, radius * 0.36, 0, 0.04 * Math.PI, 0.96 * Math.PI);
+  } else {
+    context.ellipse(0, 0, radius * 1.65, radius * 0.36, 0, 0, Math.PI * 2);
+  }
+  context.stroke();
+  context.shadowBlur = 0;
+  context.strokeStyle = 'rgba(90, 64, 36, 0.35)';
+  context.lineWidth = Math.max(1.5, radius * 0.022);
+  context.beginPath();
+  context.ellipse(0, 0, radius * 1.42, radius * 0.3, 0, layer === 'front' ? 0.04 * Math.PI : 0, layer === 'front' ? 0.96 * Math.PI : Math.PI * 2);
+  context.stroke();
   context.restore();
 }
 

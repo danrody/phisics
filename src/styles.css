@@ -349,8 +349,14 @@ p {
 }
 
 .control-panel {
+  position: relative;
   padding: 16px;
   background: var(--panel-strong);
+}
+
+.planet-panel {
+  z-index: 30;
+  overflow: visible;
 }
 
 .panel-title {
@@ -530,7 +536,8 @@ p {
   gap: 10px;
 }
 
-.select-field {
+.planet-picker {
+  position: relative;
   display: grid;
   gap: 7px;
   margin-bottom: 12px;
@@ -541,13 +548,12 @@ p {
   gap: 7px;
 }
 
-.select-field span {
+.planet-picker > span {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
 }
 
-.select-field select,
 .input-grid input {
   width: 100%;
   min-height: 42px;
@@ -559,24 +565,156 @@ p {
   outline: none;
 }
 
-.select-field select {
-  appearance: none;
-  background:
-    linear-gradient(45deg, transparent 50%, #eafffb 50%) calc(100% - 17px) 18px / 6px 6px no-repeat,
-    linear-gradient(135deg, #eafffb 50%, transparent 50%) calc(100% - 11px) 18px / 6px 6px no-repeat,
-    rgba(255, 255, 255, 0.07);
-  font-weight: 750;
+.planet-select-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.07);
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
 }
 
-.select-field option {
-  color: #0b1016;
-  background: #f4fffb;
+.planet-select-button strong {
+  overflow: hidden;
+  font-size: 0.95rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.select-field select:focus,
+.planet-select-button svg {
+  color: var(--teal);
+  transition: transform 160ms ease;
+}
+
+.planet-select-button[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.planet-select-button:hover,
+.planet-select-button:focus-visible,
 .input-grid input:focus {
   border-color: rgba(85, 227, 199, 0.58);
   box-shadow: 0 0 0 3px rgba(85, 227, 199, 0.13);
+  outline: none;
+}
+
+.planet-menu {
+  position: absolute;
+  z-index: 60;
+  right: 0;
+  left: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 330px;
+  overflow-y: auto;
+  border: 1px solid rgba(85, 227, 199, 0.34);
+  border-radius: 8px;
+  padding: 6px;
+  background: rgba(11, 16, 22, 0.97);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(18px);
+}
+
+.planet-menu.down {
+  top: calc(100% + 6px);
+}
+
+.planet-menu.up {
+  bottom: calc(100% + 6px);
+}
+
+.planet-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0 9px;
+  color: #e9faf5;
+  background: transparent;
+  font-weight: 760;
+  text-align: left;
+}
+
+.planet-option:hover,
+.planet-option:focus-visible,
+.planet-option.active {
+  border-color: rgba(85, 227, 199, 0.32);
+  background: rgba(85, 227, 199, 0.1);
+  outline: none;
+}
+
+.planet-swatch {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  box-shadow: 0 0 14px rgba(85, 227, 199, 0.16);
+}
+
+.planet-swatch.custom {
+  background: radial-gradient(circle at 32% 30%, #d8fff5, #55e3c7 32%, #123c63 70%, #07131f);
+}
+
+.planet-swatch.mercury {
+  background: radial-gradient(circle at 32% 30%, #fff0cf, #8d8376 42%, #292724 78%);
+}
+
+.planet-swatch.venus {
+  background: radial-gradient(circle at 32% 30%, #fff7cc, #f5b75c 46%, #6b3d23 82%);
+}
+
+.planet-swatch.earth {
+  background: radial-gradient(circle at 32% 30%, #eaffff, #3fc8c2 30%, #256fc5 58%, #061429 84%);
+}
+
+.planet-swatch.mars {
+  background: radial-gradient(circle at 32% 30%, #ffe1b8, #e86f43 45%, #6a231d 82%);
+}
+
+.planet-swatch.jupiter {
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 238, 196, 0.9) 0 4px, rgba(178, 100, 61, 0.86) 4px 8px),
+    radial-gradient(circle at 35% 30%, #fff3ce, #9c6240);
+}
+
+.planet-swatch.saturn {
+  position: relative;
+  background: radial-gradient(circle at 32% 30%, #fff6d5, #d3aa63 48%, #5c432d 82%);
+}
+
+.planet-swatch.saturn::after {
+  position: absolute;
+  top: 8px;
+  left: -5px;
+  width: 28px;
+  height: 6px;
+  border: 2px solid rgba(244, 217, 159, 0.78);
+  border-radius: 50%;
+  content: "";
+  transform: rotate(-15deg);
+}
+
+.planet-swatch.uranus {
+  background: radial-gradient(circle at 32% 30%, #ecfffb, #80f0e8 48%, #1d526c 82%);
+}
+
+.planet-swatch.neptune {
+  background: radial-gradient(circle at 32% 30%, #dbe8ff, #4e85ff 42%, #081340 84%);
 }
 
 .toggle-list {
