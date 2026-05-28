@@ -39,7 +39,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -320,7 +321,9 @@ p {
 
 .metric-card span,
 .slider-top span,
-.input-grid span {
+.input-grid span,
+.planet-config-grid span,
+.extra-planets-title span {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
@@ -375,6 +378,7 @@ p {
 
 .primary-action,
 .icon-action,
+.secondary-action,
 .preset-row button {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
@@ -406,8 +410,34 @@ p {
   place-items: center;
 }
 
+.icon-action.compact {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+}
+
+.secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 10px;
+  color: #07100f;
+  background: rgba(85, 227, 199, 0.86);
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.secondary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  transform: none;
+}
+
 .primary-action:hover,
 .icon-action:hover,
+.secondary-action:hover:not(:disabled),
 .preset-row button:hover,
 .toggle-switch:hover {
   transform: translateY(-1px);
@@ -543,7 +573,12 @@ p {
   margin-bottom: 12px;
 }
 
-.input-grid label {
+.compact-picker {
+  margin-bottom: 0;
+}
+
+.input-grid label,
+.planet-config-grid label {
   display: grid;
   gap: 7px;
 }
@@ -554,7 +589,9 @@ p {
   font-weight: 700;
 }
 
-.input-grid input {
+.input-grid input,
+.planet-config-grid input,
+.planet-config-grid select {
   width: 100%;
   min-height: 42px;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -562,6 +599,7 @@ p {
   padding: 0 10px;
   color: #ffffff;
   background: rgba(255, 255, 255, 0.07);
+  color-scheme: dark;
   outline: none;
 }
 
@@ -603,10 +641,74 @@ p {
 
 .planet-select-button:hover,
 .planet-select-button:focus-visible,
-.input-grid input:focus {
+.input-grid input:focus,
+.planet-config-grid input:focus,
+.planet-config-grid select:focus {
   border-color: rgba(85, 227, 199, 0.58);
   box-shadow: 0 0 0 3px rgba(85, 227, 199, 0.13);
   outline: none;
+}
+
+.extra-planets {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.extra-planets-title {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.planet-empty {
+  display: grid;
+  min-height: 40px;
+  place-items: center;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  color: #9eb4b1;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 0.84rem;
+  font-weight: 760;
+}
+
+.extra-planet-card {
+  display: grid;
+  position: relative;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.045);
+  overflow: visible;
+}
+
+.extra-planet-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+}
+
+.extra-planet-head strong {
+  overflow: hidden;
+  color: #ffffff;
+  font-size: 0.92rem;
+  font-weight: 880;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planet-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.planet-config-grid .wide {
+  grid-column: 1 / -1;
 }
 
 .planet-menu {
@@ -928,11 +1030,20 @@ tbody tr:nth-child(even) {
   }
 
   .launch-actions,
-  .input-grid {
+  .input-grid,
+  .planet-config-grid {
     grid-template-columns: 1fr;
   }
 
   .icon-action {
     width: 100%;
+  }
+
+  .icon-action.compact {
+    width: 34px;
+  }
+
+  .planet-config-grid .wide {
+    grid-column: auto;
   }
 }

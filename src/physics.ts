@@ -11,6 +11,13 @@ export type OrbitConfig = {
   angleDeg: number;
 };
 
+export type GravitySource = {
+  x: number;
+  y: number;
+  massKg: number;
+  radiusM: number;
+};
+
 export type BodyState = {
   x: number;
   y: number;
@@ -101,14 +108,71 @@ export function writeStateToBody(body: Body, state: BodyState) {
   body.velocity[1] = state.vy;
 }
 
+function defaultGravitySources(config: OrbitConfig): GravitySource[] {
+  return [
+    {
+      x: 0,
+      y: 0,
+      massKg: config.massKg,
+      radiusM: config.radiusM,
+    },
+  ];
+}
+
+function sourcesForConfig(config: OrbitConfig, gravitySources?: GravitySource[]) {
+  return gravitySources && gravitySources.length > 0 ? gravitySources : defaultGravitySources(config);
+}
+
 export function gravityAcceleration(mu: number, x: number, y: number) {
   const r2 = x * x + y * y;
+  if (r2 <= 0) {
+    return { ax: 0, ay: 0 };
+  }
+
   const r = Math.sqrt(r2);
   const factor = -mu / (r2 * r);
   return {
     ax: factor * x,
     ay: factor * y,
   };
+}
+
+export function gravityAccelerationFromSources(gravitySources: GravitySource[], x: number, y: number) {
+  return gravitySources.reduce(
+    (total, source) => {
+      const dx = x - source.x;
+      const dy = y - source.y;
+      const r2 = Math.max(dx * dx + dy * dy, 1);
+      const r = Math.sqrt(r2);
+      const factor = (-G * source.massKg) / (r2 * r);
+      return {
+        ax: total.ax + factor * dx,
+        ay: total.ay + factor * dy,
+      };
+    },
+    { ax: 0, ay: 0 },
+  );
+}
+
+export function nearestGravitySource(state: Pick<BodyState, 'x' | 'y'>, gravitySources: GravitySource[]) {
+  return gravitySources.reduce(
+    (nearest, source) => {
+      const distance = Math.hypot(state.x - source.x, state.y - source.y);
+      return distance < nearest.distance ? { source, distance } : nearest;
+    },
+    { source: gravitySources[0], distance: Number.POSITIVE_INFINITY },
+  );
+}
+
+export function findCollidingSource(
+  state: Pick<BodyState, 'x' | 'y'>,
+  gravitySources: GravitySource[],
+  radiusScale = 0.9985,
+) {
+  return (
+    gravitySources.find((source) => Math.hypot(state.x - source.x, state.y - source.y) < source.radiusM * radiusScale) ??
+    null
+  );
 }
 
 export function verletStep(state: BodyState, mu: number, dt: number): BodyState {
@@ -127,46 +191,90 @@ export function verletStep(state: BodyState, mu: number, dt: number): BodyState 
   };
 }
 
-export function stepP2Body(body: Body, mu: number, dt: number) {
-  const next = verletStep(bodyToState(body), mu, dt);
+export function verletStepWithSources(state: BodyState, gravitySources: GravitySource[], dt: number): BodyState {
+  const a0 = gravityAccelerationFromSources(gravitySources, state.x, state.y);
+  const halfVx = state.vx + 0.5 * a0.ax * dt;
+  const halfVy = state.vy + 0.5 * a0.ay * dt;
+  const x = state.x + halfVx * dt;
+  const y = state.y + halfVy * dt;
+  const a1 = gravityAccelerationFromSources(gravitySources, x, y);
+
+  return {
+    x,
+    y,
+    vx: halfVx + 0.5 * a1.ax * dt,
+    vy: halfVy + 0.5 * a1.ay * dt,
+  };
+}
+
+export function stepP2Body(body: Body, gravitySources: GravitySource[], dt: number) {
+  const next = verletStepWithSources(bodyToState(body), gravitySources, dt);
   writeStateToBody(body, next);
   return next;
 }
 
-export function stableTimeStep(config: OrbitConfig) {
+export function stableTimeStep(config: OrbitConfig, gravitySources?: GravitySource[]) {
+  const sources = sourcesForConfig(config, gravitySources);
   const orbitalUnit = Math.sqrt(config.radiusM ** 3 / (G * config.massKg));
-  return clamp(orbitalUnit / 170, 0.2, 12);
+  const fastestSourceUnit = sources.reduce((minimum, source) => {
+    const sourceUnit = Math.sqrt(source.radiusM ** 3 / (G * source.massKg));
+    return Math.min(minimum, sourceUnit);
+  }, orbitalUnit);
+
+  return clamp(fastestSourceUnit / 170, 0.05, 12);
 }
 
 export function computeMetrics(
   config: OrbitConfig,
   state: BodyState,
   collided = false,
+  gravitySources?: GravitySource[],
 ): OrbitMetrics {
+  const sources = sourcesForConfig(config, gravitySources);
+  const isMultiBody = sources.length > 1;
   const mu = G * config.massKg;
-  const r = Math.hypot(state.x, state.y);
+  const primaryR = Math.max(Math.hypot(state.x, state.y), 1);
   const speed = Math.hypot(state.vx, state.vy);
-  const specificEnergy = 0.5 * speed * speed - mu / r;
+  const nearest = nearestGravitySource(state, sources);
+  const nearestDistance = Math.max(nearest.distance, 1);
+  const nearestMu = G * nearest.source.massKg;
+  const potential = sources.reduce((sum, source) => {
+    const distance = Math.max(Math.hypot(state.x - source.x, state.y - source.y), 1);
+    return sum - (G * source.massKg) / distance;
+  }, 0);
+  const specificEnergy = 0.5 * speed * speed + potential;
+  const centralSpecificEnergy = 0.5 * speed * speed - mu / primaryR;
   const angularMomentum = state.x * state.vy - state.y * state.vx;
   const h2 = angularMomentum * angularMomentum;
-  const eccentricity = Math.sqrt(Math.max(0, 1 + (2 * specificEnergy * h2) / (mu * mu)));
-  const semiMajorAxis = specificEnergy < 0 ? -mu / (2 * specificEnergy) : null;
-  const periapsis =
-    semiMajorAxis && Number.isFinite(semiMajorAxis)
+  const eccentricity = Math.sqrt(Math.max(0, 1 + (2 * centralSpecificEnergy * h2) / (mu * mu)));
+  const semiMajorAxis = !isMultiBody && centralSpecificEnergy < 0 ? -mu / (2 * centralSpecificEnergy) : null;
+  const periapsis = !isMultiBody
+    ? semiMajorAxis && Number.isFinite(semiMajorAxis)
       ? semiMajorAxis * (1 - eccentricity)
-      : h2 / (mu * (1 + eccentricity));
+      : h2 / (mu * (1 + eccentricity))
+    : null;
   const period = semiMajorAxis ? 2 * Math.PI * Math.sqrt(semiMajorAxis ** 3 / mu) : null;
   const tolerance = (mu / config.radiusM) * 0.004;
+  const totalAcceleration = gravityAccelerationFromSources(sources, state.x, state.y);
+  const crossesPlanet = sources.some(
+    (source) => Math.hypot(state.x - source.x, state.y - source.y) < source.radiusM * 0.995,
+  );
 
-  let typeLabel = 'Разомкнутая гиперболическая';
+  let typeLabel = isMultiBody ? 'Многотельный пролёт ухода' : 'Разомкнутая гиперболическая';
   let typeTone: OrbitTone = 'escape';
 
   if (collided) {
     typeLabel = 'Столкновение с планетой';
     typeTone = 'danger';
-  } else if (periapsis !== null && periapsis < config.radiusM * 0.995) {
+  } else if (crossesPlanet || (periapsis !== null && periapsis < config.radiusM * 0.995)) {
     typeLabel = 'Траектория пересекает планету';
     typeTone = 'danger';
+  } else if (isMultiBody && specificEnergy < -tolerance) {
+    typeLabel = 'Многотельная связанная';
+    typeTone = 'stable';
+  } else if (isMultiBody && Math.abs(specificEnergy) <= tolerance) {
+    typeLabel = 'Многотельная граница ухода';
+    typeTone = 'warning';
   } else if (specificEnergy < -tolerance) {
     typeLabel = eccentricity < 0.035 ? 'Почти круговая орбита' : 'Замкнутая эллиптическая';
     typeTone = 'stable';
@@ -177,12 +285,12 @@ export function computeMetrics(
 
   return {
     mu,
-    r,
-    altitude: r - config.radiusM,
+    r: nearestDistance,
+    altitude: nearest.distance - nearest.source.radiusM,
     speed,
-    acceleration: mu / (r * r),
-    circularSpeed: Math.sqrt(mu / r),
-    escapeSpeed: Math.sqrt((2 * mu) / r),
+    acceleration: Math.hypot(totalAcceleration.ax, totalAcceleration.ay),
+    circularSpeed: Math.sqrt(nearestMu / nearestDistance),
+    escapeSpeed: Math.sqrt((2 * nearestMu) / nearestDistance),
     specificEnergy,
     angularMomentum,
     eccentricity,
@@ -194,23 +302,28 @@ export function computeMetrics(
   };
 }
 
-export function predictTrajectory(config: OrbitConfig) {
+export function predictTrajectory(config: OrbitConfig, gravitySources?: GravitySource[]) {
+  const sources = sourcesForConfig(config, gravitySources);
   const mu = G * config.massKg;
   const start = initialState(config);
-  const firstMetrics = computeMetrics(config, start);
-  const dt = stableTimeStep(config) * 1.8;
+  const firstMetrics = computeMetrics(config, start, false, sources);
+  const dt = stableTimeStep(config, sources) * 1.8;
   const orbitalUnit = Math.sqrt(config.radiusM ** 3 / mu);
   const maxTime =
-    firstMetrics.period && firstMetrics.period > 0
+    sources.length === 1 && firstMetrics.period && firstMetrics.period > 0
       ? Math.min(firstMetrics.period * 1.25, orbitalUnit * 90)
-      : orbitalUnit * 70;
-  const maxDistance = config.radiusM * 15;
+      : orbitalUnit * (sources.length > 1 ? 90 : 70);
+  const sourceMaxDistance = sources.reduce(
+    (max, source) => Math.max(max, Math.hypot(source.x, source.y) + source.radiusM),
+    config.radiusM,
+  );
+  const maxDistance = Math.max(config.radiusM * 15, sourceMaxDistance * 1.8);
   const points: BodyState[] = [start];
   let state = start;
   let time = 0;
 
   for (let i = 0; i < 12_000 && time < maxTime; i += 1) {
-    state = verletStep(state, mu, dt);
+    state = verletStepWithSources(state, sources, dt);
     time += dt;
 
     if (i % 2 === 0) {
@@ -218,7 +331,7 @@ export function predictTrajectory(config: OrbitConfig) {
     }
 
     const distance = Math.hypot(state.x, state.y);
-    if (distance < config.radiusM * 0.992 && time > dt * 3) {
+    if (findCollidingSource(state, sources, 0.992) && time > dt * 3) {
       break;
     }
 

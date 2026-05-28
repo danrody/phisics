@@ -6,12 +6,14 @@ import {
   Orbit,
   Pause,
   Play,
+  Plus,
   Radar,
   RotateCcw,
   Satellite,
   Settings2,
   Sparkles,
   Timer,
+  Trash2,
   Zap,
 } from 'lucide-react';
 import type { CSSProperties, KeyboardEvent, ReactElement } from 'react';
@@ -22,6 +24,7 @@ import {
   EARTH_MASS_KG,
   EARTH_RADIUS_M,
   G,
+  GravitySource,
   OrbitConfig,
   OrbitMetrics,
   bodyToState,
@@ -29,6 +32,7 @@ import {
   computeMetrics,
   cosmicSpeeds,
   createP2Engine,
+  findCollidingSource,
   initialState,
   predictTrajectory,
   stableTimeStep,
@@ -81,8 +85,29 @@ type PlanetVisual = {
   ring?: { color: string; shadow: string };
 };
 
+type ExtraPlanetConfig = {
+  id: string;
+  name: string;
+  visualId: PlanetVisualId;
+  massE24: number;
+  radiusKm: number;
+  distanceKm: number;
+  angleDeg: number;
+};
+
+type SimulationPlanet = GravitySource & {
+  id: string;
+  name: string;
+  visualId: PlanetVisualId;
+};
+
 const earthMassE24 = EARTH_MASS_KG / 1e24;
 const earthRadiusKm = EARTH_RADIUS_M / 1000;
+const maxExtraPlanets = 4;
+const maxExtraDistanceKm = 25_000_000;
+const minLaunchAngleDeg = -180;
+const maxLaunchAngleDeg = 180;
+const gravityVectorColors = ['#ffbd63', '#7eb3ff', '#ff7892', '#b8ffee', '#d7b7ff'];
 
 const planetPresets: PlanetPreset[] = [
   { id: 'mercury', name: 'Меркурий', massE24: 0.33011, radiusKm: 2439.7 },
@@ -285,6 +310,58 @@ function formatTime(value: number) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+function finiteOr(value: number, fallback: number) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function extraPlanetMinDistanceKm(primaryRadiusKm: number, planetRadiusKm: number) {
+  return primaryRadiusKm + planetRadiusKm + 100;
+}
+
+function normalizeExtraPlanet(planet: ExtraPlanetConfig, primaryRadiusKm: number): ExtraPlanetConfig {
+  const massE24 = clamp(finiteOr(planet.massE24, earthMassE24), 0.001, 2500);
+  const radiusKm = clamp(finiteOr(planet.radiusKm, earthRadiusKm), 300, 140000);
+  const minDistance = extraPlanetMinDistanceKm(primaryRadiusKm, radiusKm);
+
+  return {
+    ...planet,
+    massE24,
+    radiusKm,
+    distanceKm: clamp(finiteOr(planet.distanceKm, primaryRadiusKm * 8), minDistance, maxExtraDistanceKm),
+    angleDeg: clamp(finiteOr(planet.angleDeg, 0), -180, 180),
+  };
+}
+
+function createExtraPlanet(index: number, primaryRadiusKm: number): ExtraPlanetConfig {
+  const preset = planetPresets.find((planet) => planet.id === 'mars') ?? planetPresets[0];
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `extra-${Date.now()}-${index}`;
+
+  return normalizeExtraPlanet(
+    {
+      id,
+      name: `Планета ${index + 2}`,
+      visualId: preset.id,
+      massE24: preset.massE24,
+      radiusKm: preset.radiusKm,
+      distanceKm: 25_000,
+      angleDeg: 0,
+    },
+    primaryRadiusKm,
+  );
+}
+
+function extraPlanetPosition(planet: ExtraPlanetConfig) {
+  const angleRad = (planet.angleDeg * Math.PI) / 180;
+  const distanceM = planet.distanceKm * 1000;
+  return {
+    x: Math.cos(angleRad) * distanceM,
+    y: Math.sin(angleRad) * distanceM,
+  };
+}
+
 function App() {
   const [planetMassE24, setPlanetMassE24] = useState(earthMassE24);
   const [planetRadiusKm, setPlanetRadiusKm] = useState(earthRadiusKm);
@@ -294,8 +371,11 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [launchToken, setLaunchToken] = useState(0);
   const [samples, setSamples] = useState<SampleRow[]>([]);
+  const [extraPlanets, setExtraPlanets] = useState<ExtraPlanetConfig[]>([]);
   const [isPlanetMenuOpen, setIsPlanetMenuOpen] = useState(false);
   const [planetMenuDirection, setPlanetMenuDirection] = useState<'up' | 'down'>('down');
+  const [extraPlanetMenuId, setExtraPlanetMenuId] = useState<string | null>(null);
+  const [extraPlanetMenuDirection, setExtraPlanetMenuDirection] = useState<'up' | 'down'>('down');
   const [options, setOptions] = useState<DisplayOptions>({
     showTrail: true,
     showVelocity: true,
@@ -323,15 +403,46 @@ function App() {
     }),
     [angleDeg, massKg, radiusM, speedMps],
   );
+  const normalizedExtraPlanets = useMemo(
+    () => extraPlanets.map((planet) => normalizeExtraPlanet(planet, planetRadiusKm)),
+    [extraPlanets, planetRadiusKm],
+  );
+  const simulationPlanets = useMemo<SimulationPlanet[]>(() => {
+    const primary: SimulationPlanet = {
+      id: 'primary',
+      name: selectedPlanetName,
+      visualId: selectedPlanetPreset,
+      x: 0,
+      y: 0,
+      massKg,
+      radiusM,
+    };
+
+    return [
+      primary,
+      ...normalizedExtraPlanets.map((planet): SimulationPlanet => {
+        const position = extraPlanetPosition(planet);
+        return {
+          id: planet.id,
+          name: planet.name,
+          visualId: planet.visualId,
+          x: position.x,
+          y: position.y,
+          massKg: planet.massE24 * 1e24,
+          radiusM: planet.radiusKm * 1000,
+        };
+      }),
+    ];
+  }, [massKg, normalizedExtraPlanets, radiusM, selectedPlanetName, selectedPlanetPreset]);
   const initialTelemetry = useMemo<Telemetry>(() => {
     const state = initialState(config);
     return {
       time: 0,
       state,
-      metrics: computeMetrics(config, state),
+      metrics: computeMetrics(config, state, false, simulationPlanets),
       collided: false,
     };
-  }, [config]);
+  }, [config, simulationPlanets]);
   const [telemetry, setTelemetry] = useState<Telemetry>(initialTelemetry);
   const lastSampleTime = useRef(Number.NEGATIVE_INFINITY);
 
@@ -391,6 +502,7 @@ function App() {
   const resetEarth = () => {
     setPlanetMassE24(earthMassE24);
     setPlanetRadiusKm(earthRadiusKm);
+    setExtraPlanets([]);
     setSpeedRatio(1);
     setAngleDeg(0);
     setTimeScale(720);
@@ -408,6 +520,46 @@ function App() {
     setPlanetMassE24(preset.massE24);
     setPlanetRadiusKm(preset.radiusKm);
     setIsPlanetMenuOpen(false);
+  };
+
+  const addExtraPlanet = () => {
+    setExtraPlanets((current) => {
+      if (current.length >= maxExtraPlanets) {
+        return current;
+      }
+
+      return [...current, createExtraPlanet(current.length, planetRadiusKm)];
+    });
+  };
+
+  const updateExtraPlanet = (planetId: string, updater: (planet: ExtraPlanetConfig) => ExtraPlanetConfig) => {
+    setExtraPlanets((current) =>
+      current.map((planet) =>
+        planet.id === planetId ? normalizeExtraPlanet(updater(normalizeExtraPlanet(planet, planetRadiusKm)), planetRadiusKm) : planet,
+      ),
+    );
+  };
+
+  const removeExtraPlanet = (planetId: string) => {
+    setExtraPlanets((current) => current.filter((planet) => planet.id !== planetId));
+    setExtraPlanetMenuId((current) => (current === planetId ? null : current));
+  };
+
+  const selectExtraPlanetPreset = (planetId: string, visualId: PlanetVisualId) => {
+    updateExtraPlanet(planetId, (planet) => {
+      const preset = planetPresets.find((candidate) => candidate.id === visualId);
+      if (!preset) {
+        return { ...planet, visualId };
+      }
+
+      return {
+        ...planet,
+        visualId: preset.id,
+        massE24: preset.massE24,
+        radiusKm: preset.radiusKm,
+      };
+    });
+    setExtraPlanetMenuId(null);
   };
 
   const toggleOption = (key: keyof DisplayOptions) => {
@@ -486,7 +638,7 @@ function App() {
         <section className="visual-stage" aria-label="Визуализация траектории">
           <GravityCanvas
             config={config}
-            planetVisualId={selectedPlanetPreset}
+            planets={simulationPlanets}
             launchToken={launchToken}
             running={isRunning}
             timeScale={timeScale}
@@ -517,7 +669,7 @@ function App() {
               icon={<Zap size={18} />}
               label="Энергия"
               value={formatEnergy(telemetry.metrics.specificEnergy)}
-              detail={telemetry.metrics.specificEnergy < 0 ? 'связана с планетой' : 'уход возможен'}
+              detail={telemetry.metrics.specificEnergy < 0 ? 'связана с системой' : 'уход возможен'}
             />
             <MetricCard
               icon={<Radar size={18} />}
@@ -587,21 +739,21 @@ function App() {
             <SliderField
               label="Угол к горизонту"
               value={angleDeg}
-              min={-20}
-              max={55}
+              min={minLaunchAngleDeg}
+              max={maxLaunchAngleDeg}
               step={0.1}
               onChange={setAngleDeg}
               readout={`${angleDeg.toFixed(1)}°`}
               editable={{
                 value: angleDeg,
-                min: -20,
-                max: 55,
+                min: minLaunchAngleDeg,
+                max: maxLaunchAngleDeg,
                 step: 0.1,
                 ariaLabel: 'Ввести угол запуска',
                 format: (value) => `${value.toFixed(1)}°`,
                 onCommit: setAngleDeg,
               }}
-              hint="0° — горизонтально по касательной; плюс — от планеты"
+              hint="0° — по касательной; доступен полный разворот направления"
             />
           </section>
 
@@ -687,6 +839,167 @@ function App() {
                   onChange={(event) => setPlanetRadiusKm(clamp(Number(event.target.value) || 500, 500, 120000))}
                 />
               </label>
+            </div>
+
+            <div className="extra-planets">
+              <div className="extra-planets-title">
+                <span>Дополнительные планеты</span>
+                <button
+                  className="secondary-action"
+                  type="button"
+                  onClick={addExtraPlanet}
+                  disabled={normalizedExtraPlanets.length >= maxExtraPlanets}
+                >
+                  <Plus size={16} />
+                  Добавить
+                </button>
+              </div>
+
+              {normalizedExtraPlanets.length === 0 ? (
+                <div className="planet-empty">Нет дополнительных планет</div>
+              ) : (
+                normalizedExtraPlanets.map((planet) => {
+                  const minDistanceKm = extraPlanetMinDistanceKm(planetRadiusKm, planet.radiusKm);
+                  const planetName = planetPresets.find((preset) => preset.id === planet.visualId)?.name ?? 'Своя планета';
+                  return (
+                    <div className="extra-planet-card" key={planet.id}>
+                      <div className="extra-planet-head">
+                        <span className={`planet-swatch ${planet.visualId}`} aria-hidden="true" />
+                        <strong>{planet.name}</strong>
+                        <button
+                          className="icon-action compact"
+                          type="button"
+                          onClick={() => removeExtraPlanet(planet.id)}
+                          aria-label={`Удалить ${planet.name}`}
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </div>
+
+                      <div className="planet-config-grid">
+                        <div
+                          className="planet-picker compact-picker wide"
+                          onBlur={(event) => {
+                            if (!event.currentTarget.contains(event.relatedTarget)) {
+                              setExtraPlanetMenuId(null);
+                            }
+                          }}
+                        >
+                          <span>Тип</span>
+                          <button
+                            className="planet-select-button"
+                            type="button"
+                            aria-haspopup="listbox"
+                            aria-expanded={extraPlanetMenuId === planet.id}
+                            onClick={(event) => {
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              const spaceBelow = window.innerHeight - rect.bottom;
+                              const spaceAbove = rect.top;
+                              setExtraPlanetMenuDirection(spaceBelow < 330 && spaceAbove > spaceBelow ? 'up' : 'down');
+                              setExtraPlanetMenuId((current) => (current === planet.id ? null : planet.id));
+                            }}
+                          >
+                            <span className={`planet-swatch ${planet.visualId}`} aria-hidden="true" />
+                            <strong>{planetName}</strong>
+                            <ChevronDown size={17} />
+                          </button>
+                          {extraPlanetMenuId === planet.id && (
+                            <div className={`planet-menu ${extraPlanetMenuDirection}`} role="listbox" aria-label="Тип дополнительной планеты">
+                              <button
+                                className={`planet-option ${planet.visualId === 'custom' ? 'active' : ''}`}
+                                type="button"
+                                role="option"
+                                aria-selected={planet.visualId === 'custom'}
+                                onClick={() => selectExtraPlanetPreset(planet.id, 'custom')}
+                              >
+                                <span className="planet-swatch custom" aria-hidden="true" />
+                                Своя планета
+                              </button>
+                              {planetPresets.map((preset) => (
+                                <button
+                                  className={`planet-option ${planet.visualId === preset.id ? 'active' : ''}`}
+                                  key={preset.id}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={planet.visualId === preset.id}
+                                  onClick={() => selectExtraPlanetPreset(planet.id, preset.id)}
+                                >
+                                  <span className={`planet-swatch ${preset.id}`} aria-hidden="true" />
+                                  {preset.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <label>
+                          <span>Расстояние, км</span>
+                          <input
+                            type="number"
+                            min={minDistanceKm}
+                            max={maxExtraDistanceKm}
+                            step="100"
+                            value={planet.distanceKm}
+                            onChange={(event) =>
+                              updateExtraPlanet(planet.id, (current) => ({
+                                ...current,
+                                distanceKm: Number(event.target.value) || minDistanceKm,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Угол, °</span>
+                          <input
+                            type="number"
+                            min="-180"
+                            max="180"
+                            step="1"
+                            value={planet.angleDeg}
+                            onChange={(event) =>
+                              updateExtraPlanet(planet.id, (current) => ({
+                                ...current,
+                                angleDeg: Number(event.target.value) || 0,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Масса, 10²⁴ кг</span>
+                          <input
+                            type="number"
+                            min="0.001"
+                            max="2500"
+                            step="0.001"
+                            value={planet.massE24}
+                            onChange={(event) =>
+                              updateExtraPlanet(planet.id, (current) => ({
+                                ...current,
+                                massE24: Number(event.target.value) || 0.001,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Радиус, км</span>
+                          <input
+                            type="number"
+                            min="300"
+                            max="140000"
+                            step="1"
+                            value={planet.radiusKm}
+                            onChange={(event) =>
+                              updateExtraPlanet(planet.id, (current) => ({
+                                ...current,
+                                radiusKm: Number(event.target.value) || 300,
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
 
             <SliderField
@@ -790,7 +1103,7 @@ function App() {
 
 type GravityCanvasProps = {
   config: OrbitConfig;
-  planetVisualId: PlanetVisualId;
+  planets: SimulationPlanet[];
   launchToken: number;
   running: boolean;
   timeScale: number;
@@ -812,6 +1125,7 @@ type SimStore = {
   engine: ReturnType<typeof createP2Engine>;
   predicted: BodyState[];
   predictedMax: number;
+  planetsMax: number;
   trail: BodyState[];
   maxSeen: number;
   cameraRadius: number;
@@ -822,45 +1136,88 @@ type SimStore = {
   lastTelemetry: number;
 };
 
-function GravityCanvas({ config, planetVisualId, launchToken, running, timeScale, options, onTelemetry, onStop }: GravityCanvasProps) {
+function GravityCanvas({ config, planets, launchToken, running, timeScale, options, onTelemetry, onStop }: GravityCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const simRef = useRef<SimStore | null>(null);
   const starsRef = useRef<Star[]>([]);
-  const latestRef = useRef({ config, planetVisualId, running, timeScale, options, onTelemetry, onStop });
-  latestRef.current = { config, planetVisualId, running, timeScale, options, onTelemetry, onStop };
+  const latestRef = useRef({ config, planets, running, timeScale, options, onTelemetry, onStop });
+  const pendingResetRef = useRef<number | null>(null);
+  const skippedInitialConfigResetRef = useRef(false);
+  latestRef.current = { config, planets, running, timeScale, options, onTelemetry, onStop };
 
   const resetSimulation = useCallback(() => {
+    const props = latestRef.current;
+    const { config: nextConfig, planets: nextPlanets } = props;
     const previous = simRef.current;
-    const start = initialState(config);
-    const predicted = predictTrajectory(config);
-    const predictedMax = predicted.reduce((max, point) => Math.max(max, Math.hypot(point.x, point.y)), config.radiusM);
+    const start = initialState(nextConfig);
+    const predicted = predictTrajectory(nextConfig, nextPlanets);
+    const { planetsMax, predictedMax } = computeSceneExtents(nextConfig, nextPlanets, predicted);
     const previousCamera = previous
-      ? previous.cameraRadius * (config.radiusM / previous.configRadiusM)
-      : config.radiusM * 3;
+      ? previous.cameraRadius * (nextConfig.radiusM / previous.configRadiusM)
+      : nextConfig.radiusM * 3;
     simRef.current = {
       engine: createP2Engine(start),
       predicted,
       predictedMax,
+      planetsMax,
       trail: [start],
-      maxSeen: config.radiusM,
-      cameraRadius: clamp(previousCamera, config.radiusM * 2.2, config.radiusM * 12),
-      configRadiusM: config.radiusM,
+      maxSeen: nextConfig.radiusM,
+      cameraRadius: clamp(previousCamera, nextConfig.radiusM * 2.2, Math.max(nextConfig.radiusM * 12, planetsMax * 1.25)),
+      configRadiusM: nextConfig.radiusM,
       time: 0,
       collided: false,
       stopSent: false,
       lastTelemetry: 0,
     };
-    onTelemetry({
+    props.onTelemetry({
       time: 0,
       state: start,
-      metrics: computeMetrics(config, start),
+      metrics: computeMetrics(nextConfig, start, false, nextPlanets),
       collided: false,
     });
-  }, [config, onTelemetry]);
+  }, []);
+
+  const updatePredictedTrajectory = useCallback(() => {
+    const sim = simRef.current;
+    if (!sim) {
+      return;
+    }
+
+    const props = latestRef.current;
+    const predicted = predictTrajectory(props.config, props.planets);
+    const { planetsMax, predictedMax } = computeSceneExtents(props.config, props.planets, predicted);
+    sim.predicted = predicted;
+    sim.predictedMax = predictedMax;
+    sim.planetsMax = planetsMax;
+  }, []);
 
   useEffect(() => {
+    if (pendingResetRef.current !== null) {
+      window.clearTimeout(pendingResetRef.current);
+      pendingResetRef.current = null;
+    }
     resetSimulation();
   }, [launchToken, resetSimulation]);
+
+  useEffect(() => {
+    if (!skippedInitialConfigResetRef.current) {
+      skippedInitialConfigResetRef.current = true;
+      return undefined;
+    }
+
+    updatePredictedTrajectory();
+
+    pendingResetRef.current = window.setTimeout(() => {
+      pendingResetRef.current = null;
+      resetSimulation();
+    }, 90);
+    return () => {
+      if (pendingResetRef.current !== null) {
+        window.clearTimeout(pendingResetRef.current);
+        pendingResetRef.current = null;
+      }
+    };
+  }, [config, planets, resetSimulation, updatePredictedTrajectory]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -897,20 +1254,19 @@ function GravityCanvas({ config, planetVisualId, launchToken, running, timeScale
       lastFrame = now;
 
       if (sim && props.running && !sim.collided) {
-        const step = stableTimeStep(props.config);
+        const step = stableTimeStep(props.config, props.planets);
         let remaining = dtReal * props.timeScale;
         let guard = 0;
 
         while (remaining > 0 && guard < 260) {
           const dt = Math.min(step, remaining);
-          const state = stepP2Body(sim.engine.satellite, props.config.massKg * G, dt);
+          const state = stepP2Body(sim.engine.satellite, props.planets, dt);
           sim.time += dt;
           sim.maxSeen = Math.max(sim.maxSeen, Math.hypot(state.x, state.y));
           remaining -= dt;
           guard += 1;
 
-          const metrics = computeMetrics(props.config, state);
-          if (metrics.r < props.config.radiusM * 0.9985 && sim.time > step * 2.5) {
+          if (findCollidingSource(state, props.planets) && sim.time > step * 2.5) {
             sim.collided = true;
             if (!sim.stopSent) {
               sim.stopSent = true;
@@ -930,13 +1286,13 @@ function GravityCanvas({ config, planetVisualId, launchToken, running, timeScale
       }
 
       if (sim) {
-        drawScene(context, rect.width, rect.height, now, sim, props.config, props.options, props.planetVisualId);
+        drawScene(context, rect.width, rect.height, now, sim, props.config, props.options, props.planets);
         if (now - sim.lastTelemetry > 100) {
           const state = bodyToState(sim.engine.satellite);
           props.onTelemetry({
             time: sim.time,
             state,
-            metrics: computeMetrics(props.config, state, sim.collided),
+            metrics: computeMetrics(props.config, state, sim.collided, props.planets),
             collided: sim.collided,
           });
           sim.lastTelemetry = now;
@@ -972,6 +1328,13 @@ function distanceBetween(a: BodyState, b: BodyState) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function computeSceneExtents(config: OrbitConfig, planets: SimulationPlanet[], predicted: BodyState[]) {
+  const planetsMax = planets.reduce((max, planet) => Math.max(max, Math.hypot(planet.x, planet.y) + planet.radiusM), config.radiusM);
+  const predictedMax = predicted.reduce((max, point) => Math.max(max, Math.hypot(point.x, point.y)), planetsMax);
+
+  return { planetsMax, predictedMax };
+}
+
 function drawScene(
   context: CanvasRenderingContext2D,
   width: number,
@@ -980,20 +1343,27 @@ function drawScene(
   sim: SimStore,
   config: OrbitConfig,
   options: DisplayOptions,
-  planetVisualId: PlanetVisualId,
+  planets: SimulationPlanet[],
 ) {
   context.clearRect(0, 0, width, height);
   drawBackground(context, width, height, now);
 
   const state = bodyToState(sim.engine.satellite);
   const compact = width < 560;
+  const minimumCamera = config.radiusM * (compact ? 3.2 : 2.2);
+  const maximumCamera = Math.max(config.radiusM * 12, sim.planetsMax * 1.25, sim.predictedMax * 0.86, sim.maxSeen * 1.35);
   const desiredCamera = options.autoScale
     ? clamp(
-        Math.max(config.radiusM * (compact ? 3.45 : 2.45), sim.maxSeen * 1.12, sim.predictedMax * (compact ? 0.72 : 0.58)),
-        config.radiusM * (compact ? 3.2 : 2.2),
-        config.radiusM * 12,
+        Math.max(
+          config.radiusM * (compact ? 3.45 : 2.45),
+          sim.maxSeen * 1.12,
+          sim.predictedMax * (compact ? 0.72 : 0.58),
+          sim.planetsMax * (compact ? 1.18 : 1.12),
+        ),
+        minimumCamera,
+        maximumCamera,
       )
-    : config.radiusM * 4.4;
+    : Math.max(config.radiusM * 4.4, sim.planetsMax * 1.08);
   sim.cameraRadius += (desiredCamera - sim.cameraRadius) * 0.045;
 
   const scale = Math.min(width, height) / (sim.cameraRadius * 2);
@@ -1013,7 +1383,12 @@ function drawScene(
     drawTrail(context, sim.trail, toScreen);
   }
 
-  drawPlanet(context, center, config.radiusM * scale, now, planetVisualId);
+  planets.forEach((planet, index) => {
+    const screen = toScreen(planet);
+    const minRadius = index === 0 ? 10 : 7;
+    drawPlanet(context, screen, Math.max(minRadius, planet.radiusM * scale), now, planet.visualId);
+  });
+
   drawStartMarker(context, toScreen({ x: config.radiusM, y: 0 }), now);
   drawSatellite(context, toScreen(state), state, config, scale, now, sim.collided);
 
@@ -1022,7 +1397,7 @@ function drawScene(
   }
 
   if (options.showGravity) {
-    drawVector(context, toScreen(state), -state.x, state.y, '#ffbd63', 'g', 0.78);
+    drawGravityVectors(context, toScreen(state), state, planets);
   }
 
   drawLaunchWave(context, toScreen({ x: config.radiusM, y: 0 }), sim.time, scale, config.radiusM);
@@ -1308,6 +1683,49 @@ function drawSatellite(
   context.restore();
 }
 
+function drawGravityVectors(
+  context: CanvasRenderingContext2D,
+  origin: { x: number; y: number },
+  state: BodyState,
+  planets: SimulationPlanet[],
+) {
+  const vectors = planets
+    .map((planet, index) => {
+      const dx = planet.x - state.x;
+      const dy = planet.y - state.y;
+      const distanceSquared = Math.max(dx * dx + dy * dy, 1);
+      return {
+        dx,
+        dy,
+        index,
+        acceleration: (G * planet.massKg) / distanceSquared,
+      };
+    })
+    .filter((vector) => Number.isFinite(vector.acceleration) && vector.acceleration > 0);
+
+  const strongest = vectors.reduce((max, vector) => Math.max(max, vector.acceleration), 0);
+  if (strongest <= 0) {
+    return;
+  }
+
+  vectors.forEach((vector) => {
+    const relativeStrength = Math.sqrt(vector.acceleration / strongest);
+    const length = clamp(18 + relativeStrength * 78, 18, 98);
+    const alpha = clamp(0.4 + relativeStrength * 0.52, 0.4, 0.92);
+    drawVector(
+      context,
+      origin,
+      vector.dx,
+      -vector.dy,
+      gravityVectorColors[vector.index % gravityVectorColors.length],
+      planets.length > 1 ? `g${vector.index + 1}` : 'g',
+      1,
+      length,
+      alpha,
+    );
+  });
+}
+
 function drawVector(
   context: CanvasRenderingContext2D,
   origin: { x: number; y: number },
@@ -1316,12 +1734,14 @@ function drawVector(
   color: string,
   label: string,
   multiplier = 1,
+  fixedLength?: number,
+  alpha = 1,
 ) {
   const magnitude = Math.hypot(vx, vy);
   if (magnitude <= 0) {
     return;
   }
-  const length = clamp(Math.log10(magnitude + 10) * 16 * multiplier, 22, 86);
+  const length = fixedLength ?? clamp(Math.log10(magnitude + 10) * 16 * multiplier, 22, 86);
   const nx = vx / magnitude;
   const ny = vy / magnitude;
   const end = {
@@ -1330,6 +1750,7 @@ function drawVector(
   };
 
   context.save();
+  context.globalAlpha = alpha;
   context.strokeStyle = color;
   context.fillStyle = color;
   context.lineWidth = 2;
