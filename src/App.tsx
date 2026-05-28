@@ -14,7 +14,6 @@ import {
   Sparkles,
   Timer,
   Trash2,
-  Zap,
 } from 'lucide-react';
 import type { CSSProperties, KeyboardEvent, ReactElement } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -52,15 +51,6 @@ type Telemetry = {
   state: BodyState;
   metrics: OrbitMetrics;
   collided: boolean;
-};
-
-type SampleRow = {
-  time: number;
-  altitude: number;
-  speed: number;
-  energy: number;
-  acceleration: number;
-  typeLabel: string;
 };
 
 type PlanetVisualId = 'custom' | 'mercury' | 'venus' | 'earth' | 'mars' | 'jupiter' | 'saturn' | 'uranus' | 'neptune';
@@ -101,10 +91,20 @@ type SimulationPlanet = GravitySource & {
   visualId: PlanetVisualId;
 };
 
+type GravityReadout = {
+  id: string;
+  label: string;
+  planetName: string;
+  acceleration: number;
+  distance: number;
+  color: string;
+};
+
 const earthMassE24 = EARTH_MASS_KG / 1e24;
 const earthRadiusKm = EARTH_RADIUS_M / 1000;
 const maxExtraPlanets = 4;
 const maxExtraDistanceKm = 25_000_000;
+const extraPlanetAngleStepDeg = 30;
 const minLaunchAngleDeg = -180;
 const maxLaunchAngleDeg = 180;
 const gravityVectorColors = ['#ffbd63', '#7eb3ff', '#ff7892', '#b8ffee', '#d7b7ff'];
@@ -291,11 +291,14 @@ function formatDistance(value: number) {
   return `${sign}${(abs / 1000).toFixed(1)} км`;
 }
 
-function formatEnergy(value: number) {
-  return `${(value / 1_000_000).toFixed(2)} МДж/кг`;
-}
-
 function formatAcceleration(value: number) {
+  const abs = Math.abs(value);
+  if (abs > 0 && abs < 0.01) {
+    return `${value.toExponential(2)} м/с²`;
+  }
+  if (abs < 1) {
+    return `${value.toFixed(4)} м/с²`;
+  }
   return `${value.toFixed(2)} м/с²`;
 }
 
@@ -347,7 +350,7 @@ function createExtraPlanet(index: number, primaryRadiusKm: number): ExtraPlanetC
       massE24: preset.massE24,
       radiusKm: preset.radiusKm,
       distanceKm: 25_000,
-      angleDeg: 0,
+      angleDeg: index * extraPlanetAngleStepDeg,
     },
     primaryRadiusKm,
   );
@@ -362,6 +365,20 @@ function extraPlanetPosition(planet: ExtraPlanetConfig) {
   };
 }
 
+function gravityReadoutsForState(state: Pick<BodyState, 'x' | 'y'>, planets: SimulationPlanet[]): GravityReadout[] {
+  return planets.map((planet, index) => {
+    const distance = Math.max(Math.hypot(state.x - planet.x, state.y - planet.y), 1);
+    return {
+      id: planet.id,
+      label: planets.length > 1 ? `g${index + 1}` : 'g',
+      planetName: planet.name,
+      acceleration: (G * planet.massKg) / (distance * distance),
+      distance,
+      color: gravityVectorColors[index % gravityVectorColors.length],
+    };
+  });
+}
+
 function App() {
   const [planetMassE24, setPlanetMassE24] = useState(earthMassE24);
   const [planetRadiusKm, setPlanetRadiusKm] = useState(earthRadiusKm);
@@ -370,7 +387,6 @@ function App() {
   const [timeScale, setTimeScale] = useState(720);
   const [isRunning, setIsRunning] = useState(false);
   const [launchToken, setLaunchToken] = useState(0);
-  const [samples, setSamples] = useState<SampleRow[]>([]);
   const [extraPlanets, setExtraPlanets] = useState<ExtraPlanetConfig[]>([]);
   const [isPlanetMenuOpen, setIsPlanetMenuOpen] = useState(false);
   const [planetMenuDirection, setPlanetMenuDirection] = useState<'up' | 'down'>('down');
@@ -444,13 +460,14 @@ function App() {
     };
   }, [config, simulationPlanets]);
   const [telemetry, setTelemetry] = useState<Telemetry>(initialTelemetry);
-  const lastSampleTime = useRef(Number.NEGATIVE_INFINITY);
+  const gravityReadouts = useMemo(
+    () => gravityReadoutsForState(telemetry.state, simulationPlanets),
+    [simulationPlanets, telemetry.state],
+  );
 
   useEffect(() => {
     setIsRunning(false);
     setTelemetry(initialTelemetry);
-    setSamples([]);
-    lastSampleTime.current = Number.NEGATIVE_INFINITY;
   }, [initialTelemetry]);
 
   useEffect(() => {
@@ -465,31 +482,11 @@ function App() {
     return () => ctx.revert();
   }, []);
 
-  const handleTelemetry = useCallback(
-    (next: Telemetry) => {
-      setTelemetry(next);
-      const rowInterval = clamp(config.radiusM / Math.max(speeds.first, 1) / 4, 30, 420);
-      if (next.time > 0 && next.time - lastSampleTime.current >= rowInterval) {
-        lastSampleTime.current = next.time;
-        setSamples((current) => {
-          const row: SampleRow = {
-            time: next.time,
-            altitude: next.metrics.altitude,
-            speed: next.metrics.speed,
-            energy: next.metrics.specificEnergy,
-            acceleration: next.metrics.acceleration,
-            typeLabel: next.metrics.typeLabel,
-          };
-          return [row, ...current].slice(0, 10);
-        });
-      }
-    },
-    [config.radiusM, speeds.first],
-  );
+  const handleTelemetry = useCallback((next: Telemetry) => {
+    setTelemetry(next);
+  }, []);
 
   const launch = () => {
-    setSamples([]);
-    lastSampleTime.current = Number.NEGATIVE_INFINITY;
     setLaunchToken((value) => value + 1);
     setIsRunning(true);
     gsap.fromTo(
@@ -577,14 +574,14 @@ function App() {
         <div className="intro-copy">
           <div className="eyebrow">
             <Atom size={18} />
-            Родыгин Даниил
+            Родыгин Даниил 505054
           </div>
-          <h1>Гравитационный катапульт</h1>
+          <h1>Исследования гравитации</h1>
           <p>
             Сайт показывает, как начальная скорость и угол запуска у поверхности планеты
             меняют траекторию тела: падение, замкнутую орбиту, параболический уход или
-            гиперболический пролёт. Слайдеры управляют параметрами, а таблица фиксирует
-            скорость, высоту, ускорение и орбитальную энергию во время запуска.
+            гиперболический пролёт. Слайдеры управляют параметрами, а live-показатели
+            помогают сравнивать вклад каждой планеты в общее гравитационное ускорение.
           </p>
         </div>
         <div className="formula-strip" aria-label="Основные формулы модели">
@@ -631,11 +628,101 @@ function App() {
               </span>
             </span>
           </div>
+          <div className="formula-row">
+            <strong>v</strong>
+            <span className="equation">
+              =
+              <span>k</span>
+              ·
+              <span>v₁</span>
+            </span>
+          </div>
+          <div className="formula-row">
+            <strong>g</strong>
+            <span className="equation">
+              =
+              <span className="fraction">
+                <span>GM</span>
+                <span>r²</span>
+              </span>
+            </span>
+          </div>
+          <div className="formula-row">
+            <strong>F</strong>
+            <span className="equation">
+              =
+              <span className="fraction">
+                <span>GMm</span>
+                <span>r²</span>
+              </span>
+            </span>
+          </div>
         </div>
       </header>
 
       <main className="workspace">
-        <section className="visual-stage" aria-label="Визуализация траектории">
+        <div className="simulation-column">
+          <div className="left-rail">
+            <section className="data-panel" aria-label="Живые параметры модели">
+              <div className="data-heading">
+                <div>
+                  <div className="panel-title">
+                    <Activity size={19} />
+                    Живые параметры
+                  </div>
+                  <p>Скорость тела и ускорение от каждой планеты обновляются во время движения модели.</p>
+                </div>
+                <div className="data-summary">
+                  <span>t = {formatTime(telemetry.time)}</span>
+                  <span>планет: {simulationPlanets.length}</span>
+                  <span>Σg = {formatAcceleration(telemetry.metrics.acceleration)}</span>
+                </div>
+              </div>
+
+              <div className="live-readout-grid">
+                <MetricCard
+                  icon={<Gauge size={18} />}
+                  label="Скорость"
+                  value={formatSpeed(telemetry.metrics.speed)}
+                  detail={`v / v₁ = ${(telemetry.metrics.speed / speeds.first).toFixed(3)}`}
+                  accent="#60f0cf"
+                />
+                {gravityReadouts.map((readout) => (
+                  <MetricCard
+                    key={readout.id}
+                    icon={<Radar size={18} />}
+                    label={`${readout.label} · ${readout.planetName}`}
+                    value={formatAcceleration(readout.acceleration)}
+                    detail={`расстояние ${formatDistance(readout.distance)}`}
+                    accent={readout.color}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <section className="control-panel layer-panel">
+              <div className="panel-title">
+                <Sparkles size={19} />
+                Слои визуализации
+              </div>
+              <div className="toggle-list">
+                <ToggleSwitch label="След траектории" checked={options.showTrail} onChange={() => toggleOption('showTrail')} />
+                <ToggleSwitch
+                  label="Вектор скорости"
+                  checked={options.showVelocity}
+                  onChange={() => toggleOption('showVelocity')}
+                />
+                <ToggleSwitch
+                  label="Вектор гравитации"
+                  checked={options.showGravity}
+                  onChange={() => toggleOption('showGravity')}
+                />
+                <ToggleSwitch label="Автомасштаб" checked={options.autoScale} onChange={() => toggleOption('autoScale')} />
+              </div>
+            </section>
+          </div>
+
+          <section className="visual-stage" aria-label="Визуализация траектории">
           <GravityCanvas
             config={config}
             planets={simulationPlanets}
@@ -658,27 +745,8 @@ function App() {
             </div>
           </div>
 
-          <div className="metric-grid">
-            <MetricCard
-              icon={<Gauge size={18} />}
-              label="Скорость"
-              value={formatSpeed(telemetry.metrics.speed)}
-              detail={`v / v₁ = ${(telemetry.metrics.speed / speeds.first).toFixed(3)}`}
-            />
-            <MetricCard
-              icon={<Zap size={18} />}
-              label="Энергия"
-              value={formatEnergy(telemetry.metrics.specificEnergy)}
-              detail={telemetry.metrics.specificEnergy < 0 ? 'связана с системой' : 'уход возможен'}
-            />
-            <MetricCard
-              icon={<Radar size={18} />}
-              label="Высота"
-              value={formatDistance(telemetry.metrics.altitude)}
-              detail={`r = ${formatDistance(telemetry.metrics.r)}`}
-            />
-          </div>
-        </section>
+          </section>
+        </div>
 
         <aside className="control-rail" aria-label="Панель управления моделью">
           <section className="control-panel launch-panel">
@@ -858,147 +926,149 @@ function App() {
               {normalizedExtraPlanets.length === 0 ? (
                 <div className="planet-empty">Нет дополнительных планет</div>
               ) : (
-                normalizedExtraPlanets.map((planet) => {
-                  const minDistanceKm = extraPlanetMinDistanceKm(planetRadiusKm, planet.radiusKm);
-                  const planetName = planetPresets.find((preset) => preset.id === planet.visualId)?.name ?? 'Своя планета';
-                  return (
-                    <div className="extra-planet-card" key={planet.id}>
-                      <div className="extra-planet-head">
-                        <span className={`planet-swatch ${planet.visualId}`} aria-hidden="true" />
-                        <strong>{planet.name}</strong>
-                        <button
-                          className="icon-action compact"
-                          type="button"
-                          onClick={() => removeExtraPlanet(planet.id)}
-                          aria-label={`Удалить ${planet.name}`}
-                        >
-                          <Trash2 size={17} />
-                        </button>
-                      </div>
-
-                      <div className="planet-config-grid">
-                        <div
-                          className="planet-picker compact-picker wide"
-                          onBlur={(event) => {
-                            if (!event.currentTarget.contains(event.relatedTarget)) {
-                              setExtraPlanetMenuId(null);
-                            }
-                          }}
-                        >
-                          <span>Тип</span>
+                <div className="extra-planet-list">
+                  {normalizedExtraPlanets.map((planet) => {
+                    const minDistanceKm = extraPlanetMinDistanceKm(planetRadiusKm, planet.radiusKm);
+                    const planetName = planetPresets.find((preset) => preset.id === planet.visualId)?.name ?? 'Своя планета';
+                    return (
+                      <div className="extra-planet-card" key={planet.id}>
+                        <div className="extra-planet-head">
+                          <span className={`planet-swatch ${planet.visualId}`} aria-hidden="true" />
+                          <strong>{planet.name}</strong>
                           <button
-                            className="planet-select-button"
+                            className="icon-action compact"
                             type="button"
-                            aria-haspopup="listbox"
-                            aria-expanded={extraPlanetMenuId === planet.id}
-                            onClick={(event) => {
-                              const rect = event.currentTarget.getBoundingClientRect();
-                              const spaceBelow = window.innerHeight - rect.bottom;
-                              const spaceAbove = rect.top;
-                              setExtraPlanetMenuDirection(spaceBelow < 330 && spaceAbove > spaceBelow ? 'up' : 'down');
-                              setExtraPlanetMenuId((current) => (current === planet.id ? null : planet.id));
+                            onClick={() => removeExtraPlanet(planet.id)}
+                            aria-label={`Удалить ${planet.name}`}
+                          >
+                            <Trash2 size={17} />
+                          </button>
+                        </div>
+
+                        <div className="planet-config-grid">
+                          <div
+                            className="planet-picker compact-picker wide"
+                            onBlur={(event) => {
+                              if (!event.currentTarget.contains(event.relatedTarget)) {
+                                setExtraPlanetMenuId(null);
+                              }
                             }}
                           >
-                            <span className={`planet-swatch ${planet.visualId}`} aria-hidden="true" />
-                            <strong>{planetName}</strong>
-                            <ChevronDown size={17} />
-                          </button>
-                          {extraPlanetMenuId === planet.id && (
-                            <div className={`planet-menu ${extraPlanetMenuDirection}`} role="listbox" aria-label="Тип дополнительной планеты">
-                              <button
-                                className={`planet-option ${planet.visualId === 'custom' ? 'active' : ''}`}
-                                type="button"
-                                role="option"
-                                aria-selected={planet.visualId === 'custom'}
-                                onClick={() => selectExtraPlanetPreset(planet.id, 'custom')}
-                              >
-                                <span className="planet-swatch custom" aria-hidden="true" />
-                                Своя планета
-                              </button>
-                              {planetPresets.map((preset) => (
+                            <span>Тип</span>
+                            <button
+                              className="planet-select-button"
+                              type="button"
+                              aria-haspopup="listbox"
+                              aria-expanded={extraPlanetMenuId === planet.id}
+                              onClick={(event) => {
+                                const rect = event.currentTarget.getBoundingClientRect();
+                                const spaceBelow = window.innerHeight - rect.bottom;
+                                const spaceAbove = rect.top;
+                                setExtraPlanetMenuDirection(spaceBelow < 330 && spaceAbove > spaceBelow ? 'up' : 'down');
+                                setExtraPlanetMenuId((current) => (current === planet.id ? null : planet.id));
+                              }}
+                            >
+                              <span className={`planet-swatch ${planet.visualId}`} aria-hidden="true" />
+                              <strong>{planetName}</strong>
+                              <ChevronDown size={17} />
+                            </button>
+                            {extraPlanetMenuId === planet.id && (
+                              <div className={`planet-menu ${extraPlanetMenuDirection}`} role="listbox" aria-label="Тип дополнительной планеты">
                                 <button
-                                  className={`planet-option ${planet.visualId === preset.id ? 'active' : ''}`}
-                                  key={preset.id}
+                                  className={`planet-option ${planet.visualId === 'custom' ? 'active' : ''}`}
                                   type="button"
                                   role="option"
-                                  aria-selected={planet.visualId === preset.id}
-                                  onClick={() => selectExtraPlanetPreset(planet.id, preset.id)}
+                                  aria-selected={planet.visualId === 'custom'}
+                                  onClick={() => selectExtraPlanetPreset(planet.id, 'custom')}
                                 >
-                                  <span className={`planet-swatch ${preset.id}`} aria-hidden="true" />
-                                  {preset.name}
+                                  <span className="planet-swatch custom" aria-hidden="true" />
+                                  Своя планета
                                 </button>
-                              ))}
-                            </div>
-                          )}
+                                {planetPresets.map((preset) => (
+                                  <button
+                                    className={`planet-option ${planet.visualId === preset.id ? 'active' : ''}`}
+                                    key={preset.id}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={planet.visualId === preset.id}
+                                    onClick={() => selectExtraPlanetPreset(planet.id, preset.id)}
+                                  >
+                                    <span className={`planet-swatch ${preset.id}`} aria-hidden="true" />
+                                    {preset.name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <label>
+                            <span>Расстояние, км</span>
+                            <input
+                              type="number"
+                              min={minDistanceKm}
+                              max={maxExtraDistanceKm}
+                              step="100"
+                              value={planet.distanceKm}
+                              onChange={(event) =>
+                                updateExtraPlanet(planet.id, (current) => ({
+                                  ...current,
+                                  distanceKm: Number(event.target.value) || minDistanceKm,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Угол, °</span>
+                            <input
+                              type="number"
+                              min="-180"
+                              max="180"
+                              step="1"
+                              value={planet.angleDeg}
+                              onChange={(event) =>
+                                updateExtraPlanet(planet.id, (current) => ({
+                                  ...current,
+                                  angleDeg: Number(event.target.value) || 0,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Масса, 10²⁴ кг</span>
+                            <input
+                              type="number"
+                              min="0.001"
+                              max="2500"
+                              step="0.001"
+                              value={planet.massE24}
+                              onChange={(event) =>
+                                updateExtraPlanet(planet.id, (current) => ({
+                                  ...current,
+                                  massE24: Number(event.target.value) || 0.001,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Радиус, км</span>
+                            <input
+                              type="number"
+                              min="300"
+                              max="140000"
+                              step="1"
+                              value={planet.radiusKm}
+                              onChange={(event) =>
+                                updateExtraPlanet(planet.id, (current) => ({
+                                  ...current,
+                                  radiusKm: Number(event.target.value) || 300,
+                                }))
+                              }
+                            />
+                          </label>
                         </div>
-                        <label>
-                          <span>Расстояние, км</span>
-                          <input
-                            type="number"
-                            min={minDistanceKm}
-                            max={maxExtraDistanceKm}
-                            step="100"
-                            value={planet.distanceKm}
-                            onChange={(event) =>
-                              updateExtraPlanet(planet.id, (current) => ({
-                                ...current,
-                                distanceKm: Number(event.target.value) || minDistanceKm,
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>Угол, °</span>
-                          <input
-                            type="number"
-                            min="-180"
-                            max="180"
-                            step="1"
-                            value={planet.angleDeg}
-                            onChange={(event) =>
-                              updateExtraPlanet(planet.id, (current) => ({
-                                ...current,
-                                angleDeg: Number(event.target.value) || 0,
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>Масса, 10²⁴ кг</span>
-                          <input
-                            type="number"
-                            min="0.001"
-                            max="2500"
-                            step="0.001"
-                            value={planet.massE24}
-                            onChange={(event) =>
-                              updateExtraPlanet(planet.id, (current) => ({
-                                ...current,
-                                massE24: Number(event.target.value) || 0.001,
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>Радиус, км</span>
-                          <input
-                            type="number"
-                            min="300"
-                            max="140000"
-                            step="1"
-                            value={planet.radiusKm}
-                            onChange={(event) =>
-                              updateExtraPlanet(planet.id, (current) => ({
-                                ...current,
-                                radiusKm: Number(event.target.value) || 300,
-                              }))
-                            }
-                          />
-                        </label>
                       </div>
-                    </div>
-                  );
-                })
+                    );
+                  })}
+                </div>
               )}
             </div>
 
@@ -1023,80 +1093,9 @@ function App() {
             />
           </section>
 
-          <section className="control-panel">
-            <div className="panel-title">
-              <Sparkles size={19} />
-              Слои визуализации
-            </div>
-            <div className="toggle-list">
-              <ToggleSwitch label="След траектории" checked={options.showTrail} onChange={() => toggleOption('showTrail')} />
-              <ToggleSwitch
-                label="Вектор скорости"
-                checked={options.showVelocity}
-                onChange={() => toggleOption('showVelocity')}
-              />
-              <ToggleSwitch
-                label="Вектор гравитации"
-                checked={options.showGravity}
-                onChange={() => toggleOption('showGravity')}
-              />
-              <ToggleSwitch label="Автомасштаб" checked={options.autoScale} onChange={() => toggleOption('autoScale')} />
-            </div>
-          </section>
         </aside>
       </main>
 
-      <section className="data-panel" aria-label="Таблица изменения величин">
-        <div className="data-heading">
-          <div>
-            <div className="panel-title">
-              <Activity size={19} />
-              Журнал величин
-            </div>
-            <p>Новые строки появляются во время полёта и показывают, как меняются параметры тела.</p>
-          </div>
-          <div className="data-summary">
-            <span>e = {telemetry.metrics.eccentricity.toFixed(3)}</span>
-            <span>a = {telemetry.metrics.semiMajorAxis ? formatDistance(telemetry.metrics.semiMajorAxis) : '∞'}</span>
-            <span>g = {formatAcceleration(telemetry.metrics.acceleration)}</span>
-          </div>
-        </div>
-
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Время</th>
-                <th>Высота</th>
-                <th>Скорость</th>
-                <th>Энергия ε</th>
-                <th>Ускорение</th>
-                <th>Тип траектории</th>
-              </tr>
-            </thead>
-            <tbody>
-              {samples.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="empty-row">
-                    Нажми «Запустить», чтобы заполнить таблицу измерениями.
-                  </td>
-                </tr>
-              ) : (
-                samples.map((row) => (
-                  <tr key={`${row.time}-${row.speed}`}>
-                    <td>{formatTime(row.time)}</td>
-                    <td>{formatDistance(row.altitude)}</td>
-                    <td>{formatSpeed(row.speed)}</td>
-                    <td>{formatEnergy(row.energy)}</td>
-                    <td>{formatAcceleration(row.acceleration)}</td>
-                    <td>{row.typeLabel}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </div>
   );
 }
@@ -1129,7 +1128,6 @@ type SimStore = {
   trail: BodyState[];
   maxSeen: number;
   cameraRadius: number;
-  configRadiusM: number;
   time: number;
   collided: boolean;
   stopSent: boolean;
@@ -1148,22 +1146,28 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
   const resetSimulation = useCallback(() => {
     const props = latestRef.current;
     const { config: nextConfig, planets: nextPlanets } = props;
-    const previous = simRef.current;
     const start = initialState(nextConfig);
     const predicted = predictTrajectory(nextConfig, nextPlanets);
     const { planetsMax, predictedMax } = computeSceneExtents(nextConfig, nextPlanets, predicted);
-    const previousCamera = previous
-      ? previous.cameraRadius * (nextConfig.radiusM / previous.configRadiusM)
-      : nextConfig.radiusM * 3;
+    const initialMaxSeen = Math.max(nextConfig.radiusM, Math.hypot(start.x, start.y));
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const compact = rect ? rect.width < 560 : false;
+    const targetCamera = sceneCameraTargetForOptions(
+      nextConfig,
+      planetsMax,
+      predictedMax,
+      initialMaxSeen,
+      compact,
+      props.options.autoScale,
+    );
     simRef.current = {
       engine: createP2Engine(start),
       predicted,
       predictedMax,
       planetsMax,
       trail: [start],
-      maxSeen: nextConfig.radiusM,
-      cameraRadius: clamp(previousCamera, nextConfig.radiusM * 2.2, Math.max(nextConfig.radiusM * 12, planetsMax * 1.25)),
-      configRadiusM: nextConfig.radiusM,
+      maxSeen: initialMaxSeen,
+      cameraRadius: targetCamera,
       time: 0,
       collided: false,
       stopSent: false,
@@ -1186,9 +1190,22 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
     const props = latestRef.current;
     const predicted = predictTrajectory(props.config, props.planets);
     const { planetsMax, predictedMax } = computeSceneExtents(props.config, props.planets, predicted);
+    const start = initialState(props.config);
+    const maxSeen = Math.max(props.config.radiusM, Math.hypot(start.x, start.y));
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const compact = rect ? rect.width < 560 : false;
     sim.predicted = predicted;
     sim.predictedMax = predictedMax;
     sim.planetsMax = planetsMax;
+    sim.maxSeen = maxSeen;
+    sim.cameraRadius = sceneCameraTargetForOptions(
+      props.config,
+      planetsMax,
+      predictedMax,
+      maxSeen,
+      compact,
+      props.options.autoScale,
+    );
   }, []);
 
   useEffect(() => {
@@ -1218,6 +1235,25 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
       }
     };
   }, [config, planets, resetSimulation, updatePredictedTrajectory]);
+
+  useEffect(() => {
+    const sim = simRef.current;
+    if (!sim) {
+      return;
+    }
+
+    const props = latestRef.current;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const compact = rect ? rect.width < 560 : false;
+    sim.cameraRadius = sceneCameraTargetForOptions(
+      props.config,
+      sim.planetsMax,
+      sim.predictedMax,
+      sim.maxSeen,
+      compact,
+      props.options.autoScale,
+    );
+  }, [options.autoScale]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1335,6 +1371,40 @@ function computeSceneExtents(config: OrbitConfig, planets: SimulationPlanet[], p
   return { planetsMax, predictedMax };
 }
 
+function sceneCameraTarget(
+  config: OrbitConfig,
+  planetsMax: number,
+  predictedMax: number,
+  maxSeen: number,
+  compact: boolean,
+) {
+  const minimumCamera = config.radiusM * (compact ? 3.2 : 2.2);
+  const maximumCamera = Math.max(config.radiusM * 12, planetsMax * 1.25, predictedMax * 0.86, maxSeen * 1.35);
+  return clamp(
+    Math.max(
+      config.radiusM * (compact ? 3.45 : 2.45),
+      maxSeen * 1.12,
+      predictedMax * (compact ? 0.72 : 0.58),
+      planetsMax * (compact ? 1.18 : 1.12),
+    ),
+    minimumCamera,
+    maximumCamera,
+  );
+}
+
+function sceneCameraTargetForOptions(
+  config: OrbitConfig,
+  planetsMax: number,
+  predictedMax: number,
+  maxSeen: number,
+  compact: boolean,
+  autoScale: boolean,
+) {
+  return autoScale
+    ? sceneCameraTarget(config, planetsMax, predictedMax, maxSeen, compact)
+    : Math.max(config.radiusM * 4.4, planetsMax * 1.08);
+}
+
 function drawScene(
   context: CanvasRenderingContext2D,
   width: number,
@@ -1350,21 +1420,15 @@ function drawScene(
 
   const state = bodyToState(sim.engine.satellite);
   const compact = width < 560;
-  const minimumCamera = config.radiusM * (compact ? 3.2 : 2.2);
-  const maximumCamera = Math.max(config.radiusM * 12, sim.planetsMax * 1.25, sim.predictedMax * 0.86, sim.maxSeen * 1.35);
-  const desiredCamera = options.autoScale
-    ? clamp(
-        Math.max(
-          config.radiusM * (compact ? 3.45 : 2.45),
-          sim.maxSeen * 1.12,
-          sim.predictedMax * (compact ? 0.72 : 0.58),
-          sim.planetsMax * (compact ? 1.18 : 1.12),
-        ),
-        minimumCamera,
-        maximumCamera,
-      )
-    : Math.max(config.radiusM * 4.4, sim.planetsMax * 1.08);
-  sim.cameraRadius += (desiredCamera - sim.cameraRadius) * 0.045;
+  const desiredCamera = sceneCameraTargetForOptions(
+    config,
+    sim.planetsMax,
+    sim.predictedMax,
+    sim.maxSeen,
+    compact,
+    options.autoScale,
+  );
+  sim.cameraRadius += (desiredCamera - sim.cameraRadius) * (desiredCamera < sim.cameraRadius ? 0.18 : 0.045);
 
   const scale = Math.min(width, height) / (sim.cameraRadius * 2);
   const center = {
@@ -1792,11 +1856,12 @@ type MetricCardProps = {
   label: string;
   value: string;
   detail: string;
+  accent?: string;
 };
 
-function MetricCard({ icon, label, value, detail }: MetricCardProps) {
+function MetricCard({ icon, label, value, detail, accent }: MetricCardProps) {
   return (
-    <article className="metric-card">
+    <article className="metric-card" style={accent ? ({ '--metric-color': accent } as CSSProperties) : undefined}>
       <div className="metric-icon">{icon}</div>
       <div>
         <span>{label}</span>
