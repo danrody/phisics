@@ -1160,9 +1160,10 @@ function GravityCanvas({
   const skippedInitialConfigResetRef = useRef(false);
   latestRef.current = { config, planets, running, timeScale, options, onTelemetry, onStop, onManualZoom };
 
-  const resetSimulation = useCallback(() => {
+  const resetSimulation = useCallback((preserveManualView = false) => {
     const props = latestRef.current;
     const { config: nextConfig, planets: nextPlanets } = props;
+    const previous = simRef.current;
     const start = initialState(nextConfig);
     const predicted = predictTrajectory(nextConfig, nextPlanets);
     const { planetsMax, predictedMax } = computeSceneExtents(nextConfig, nextPlanets, predicted);
@@ -1177,6 +1178,7 @@ function GravityCanvas({
       compact,
       props.options.autoScale,
     );
+    const keepManualView = preserveManualView && previous?.manualCamera;
     simRef.current = {
       engine: createP2Engine(start),
       predicted,
@@ -1184,10 +1186,10 @@ function GravityCanvas({
       planetsMax,
       trail: [start],
       maxSeen: initialMaxSeen,
-      cameraRadius: targetCamera,
-      viewX: 0,
-      viewY: 0,
-      manualCamera: false,
+      cameraRadius: keepManualView ? previous.cameraRadius : targetCamera,
+      viewX: keepManualView ? previous.viewX : 0,
+      viewY: keepManualView ? previous.viewY : 0,
+      manualCamera: keepManualView,
       time: 0,
       collided: false,
       stopSent: false,
@@ -1236,7 +1238,7 @@ function GravityCanvas({
       window.clearTimeout(pendingResetRef.current);
       pendingResetRef.current = null;
     }
-    resetSimulation();
+    resetSimulation(true);
   }, [launchToken, resetSimulation]);
 
   useEffect(() => {
