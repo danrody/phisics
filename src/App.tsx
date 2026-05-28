@@ -732,6 +732,9 @@ function App() {
             options={options}
             onTelemetry={handleTelemetry}
             onStop={() => setIsRunning(false)}
+            onManualZoom={() =>
+              setOptions((current) => (current.autoScale ? { ...current, autoScale: false } : current))
+            }
           />
 
           <div className="stage-hud">
@@ -1109,6 +1112,7 @@ type GravityCanvasProps = {
   options: DisplayOptions;
   onTelemetry: (telemetry: Telemetry) => void;
   onStop: () => void;
+  onManualZoom: () => void;
 };
 
 type Star = {
@@ -1128,20 +1132,33 @@ type SimStore = {
   trail: BodyState[];
   maxSeen: number;
   cameraRadius: number;
+  viewX: number;
+  viewY: number;
+  manualCamera: boolean;
   time: number;
   collided: boolean;
   stopSent: boolean;
   lastTelemetry: number;
 };
 
-function GravityCanvas({ config, planets, launchToken, running, timeScale, options, onTelemetry, onStop }: GravityCanvasProps) {
+function GravityCanvas({
+  config,
+  planets,
+  launchToken,
+  running,
+  timeScale,
+  options,
+  onTelemetry,
+  onStop,
+  onManualZoom,
+}: GravityCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const simRef = useRef<SimStore | null>(null);
   const starsRef = useRef<Star[]>([]);
-  const latestRef = useRef({ config, planets, running, timeScale, options, onTelemetry, onStop });
+  const latestRef = useRef({ config, planets, running, timeScale, options, onTelemetry, onStop, onManualZoom });
   const pendingResetRef = useRef<number | null>(null);
   const skippedInitialConfigResetRef = useRef(false);
-  latestRef.current = { config, planets, running, timeScale, options, onTelemetry, onStop };
+  latestRef.current = { config, planets, running, timeScale, options, onTelemetry, onStop, onManualZoom };
 
   const resetSimulation = useCallback(() => {
     const props = latestRef.current;
@@ -1168,6 +1185,9 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
       trail: [start],
       maxSeen: initialMaxSeen,
       cameraRadius: targetCamera,
+      viewX: 0,
+      viewY: 0,
+      manualCamera: false,
       time: 0,
       collided: false,
       stopSent: false,
@@ -1206,6 +1226,9 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
       compact,
       props.options.autoScale,
     );
+    sim.viewX = 0;
+    sim.viewY = 0;
+    sim.manualCamera = false;
   }, []);
 
   useEffect(() => {
@@ -1243,6 +1266,10 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
     }
 
     const props = latestRef.current;
+    if (!props.options.autoScale) {
+      return;
+    }
+
     const rect = canvasRef.current?.getBoundingClientRect();
     const compact = rect ? rect.width < 560 : false;
     sim.cameraRadius = sceneCameraTargetForOptions(
@@ -1253,6 +1280,9 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
       compact,
       props.options.autoScale,
     );
+    sim.viewX = 0;
+    sim.viewY = 0;
+    sim.manualCamera = false;
   }, [options.autoScale]);
 
   useEffect(() => {
@@ -1265,6 +1295,45 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
     if (!context) {
       return undefined;
     }
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) {
+        return;
+      }
+
+      const sim = simRef.current;
+      if (!sim) {
+        return;
+      }
+
+      event.preventDefault();
+      const props = latestRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const center = sceneScreenCenter(rect.width, rect.height);
+      const mouseX = event.clientX - rect.left;
+      const mouseY = event.clientY - rect.top;
+      const scale = Math.min(rect.width, rect.height) / (sim.cameraRadius * 2);
+      const worldX = sim.viewX + (mouseX - center.x) / scale;
+      const worldY = sim.viewY - (mouseY - center.y) / scale;
+      const zoomFactor = clamp(Math.exp(event.deltaY * 0.001), 0.72, 1.38);
+      const minCamera = props.config.radiusM * 0.55;
+      const maxCamera = Math.max(
+        props.config.radiusM * 220,
+        sim.planetsMax * 3,
+        sim.predictedMax * 2.4,
+        sim.maxSeen * 2.6,
+      );
+      const nextCameraRadius = clamp(sim.cameraRadius * zoomFactor, minCamera, maxCamera);
+      const nextScale = Math.min(rect.width, rect.height) / (nextCameraRadius * 2);
+
+      sim.cameraRadius = nextCameraRadius;
+      sim.viewX = worldX - (mouseX - center.x) / nextScale;
+      sim.viewY = worldY + (mouseY - center.y) / nextScale;
+      sim.manualCamera = true;
+      props.onManualZoom();
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -1342,6 +1411,7 @@ function GravityCanvas({ config, planets, launchToken, running, timeScale, optio
     return () => {
       cancelAnimationFrame(frameId);
       observer.disconnect();
+      canvas.removeEventListener('wheel', handleWheel);
     };
   }, []);
 
@@ -1405,6 +1475,14 @@ function sceneCameraTargetForOptions(
     : Math.max(config.radiusM * 4.4, planetsMax * 1.08);
 }
 
+function sceneScreenCenter(width: number, height: number) {
+  const compact = width < 560;
+  return {
+    x: width * 0.5,
+    y: height * (compact ? 0.45 : 0.53),
+  };
+}
+
 function drawScene(
   context: CanvasRenderingContext2D,
   width: number,
@@ -1420,27 +1498,23 @@ function drawScene(
 
   const state = bodyToState(sim.engine.satellite);
   const compact = width < 560;
-  const desiredCamera = sceneCameraTargetForOptions(
-    config,
-    sim.planetsMax,
-    sim.predictedMax,
-    sim.maxSeen,
-    compact,
-    options.autoScale,
-  );
-  sim.cameraRadius += (desiredCamera - sim.cameraRadius) * (desiredCamera < sim.cameraRadius ? 0.18 : 0.045);
+  const desiredCamera = sim.manualCamera
+    ? sim.cameraRadius
+    : sceneCameraTargetForOptions(config, sim.planetsMax, sim.predictedMax, sim.maxSeen, compact, options.autoScale);
+  if (!sim.manualCamera) {
+    sim.cameraRadius += (desiredCamera - sim.cameraRadius) * (desiredCamera < sim.cameraRadius ? 0.18 : 0.045);
+    sim.viewX = 0;
+    sim.viewY = 0;
+  }
 
   const scale = Math.min(width, height) / (sim.cameraRadius * 2);
-  const center = {
-    x: width * 0.5,
-    y: height * (compact ? 0.45 : 0.53),
-  };
+  const center = sceneScreenCenter(width, height);
   const toScreen = (point: Pick<BodyState, 'x' | 'y'>) => ({
-    x: center.x + point.x * scale,
-    y: center.y - point.y * scale,
+    x: center.x + (point.x - sim.viewX) * scale,
+    y: center.y - (point.y - sim.viewY) * scale,
   });
 
-  drawReferenceGrid(context, center, scale, config.radiusM, width, height);
+  drawReferenceGrid(context, toScreen({ x: 0, y: 0 }), scale, config.radiusM, width, height);
   drawPredictedPath(context, sim.predicted, toScreen);
 
   if (options.showTrail) {
